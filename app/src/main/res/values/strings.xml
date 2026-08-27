@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">imogen</string>
+    <string name="backup_channel">Photo backup</string>
+    <string name="backup_running">Backing up photos</string>
+</resources>

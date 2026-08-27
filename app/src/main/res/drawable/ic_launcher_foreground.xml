@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The imogen mark: a square viewfinder with the aperture punched out of it, and the
+    lens sitting in the hole. Drawn on the 108dp adaptive canvas, where the inner 72dp
+    is the only part guaranteed to survive whatever mask the launcher applies.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- The frame, with the aperture removed by the even-odd rule. -->
+    <path
+        android:fillColor="#E39B5C"
+        android:fillType="evenOdd"
+        android:pathData="M40.5,40.5 L67.5,40.5 A5,5 0 0 1 72.5,45.5 L72.5,62.5 A5,5 0 0 1 67.5,67.5 L40.5,67.5 A5,5 0 0 1 35.5,62.5 L35.5,45.5 A5,5 0 0 1 40.5,40.5 Z M54,44.7 A9.3,9.3 0 1 0 54,63.3 A9.3,9.3 0 1 0 54,44.7 Z" />
+
+    <!-- The lens. -->
+    <path
+        android:fillColor="#E39B5C"
+        android:pathData="M54,48.5 A5.5,5.5 0 1 0 54,59.5 A5.5,5.5 0 1 0 54,48.5 Z" />
+</vector>
