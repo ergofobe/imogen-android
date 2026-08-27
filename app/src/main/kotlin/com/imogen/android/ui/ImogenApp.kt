@@ -278,6 +278,7 @@ private fun Content(
                 personId = overlay.id,
                 columns = columns,
                 contentPadding = contentPadding,
+                onAddToAlbum = addToAlbum,
             )
             return
         }
