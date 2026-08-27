@@ -99,12 +99,15 @@ fun TimelineScreen(
     val grid = rememberLazyGridState()
     val scope = rememberCoroutineScope()
 
-    var selection by remember { mutableStateOf<Selection>(Selection.Ids()) }
+    // Keyed on the model. This composable is re-invoked in the same slot with a different
+    // one — one person's photographs, then another's — and a selection that survived that
+    // would be a filter aimed at the library somebody has just left.
+    var selection by remember(model) { mutableStateOf<Selection>(Selection.Ids()) }
     /** How many photographs a "select all" holds, once the server has said. */
-    var matchedTotal by remember { mutableStateOf<Long?>(null) }
-    var confirmingTrash by remember { mutableStateOf<Long?>(null) }
+    var matchedTotal by remember(model) { mutableStateOf<Long?>(null) }
+    var confirmingTrash by remember(model) { mutableStateOf<Long?>(null) }
     /** The day a photograph was opened from, and the photograph. */
-    var opened by remember { mutableStateOf<Pair<String, TimelineTile>?>(null) }
+    var opened by remember(model) { mutableStateOf<Pair<String, TimelineTile>?>(null) }
     /**
      * Whole assets fetched for the viewer, by id.
      *
@@ -112,8 +115,8 @@ fun TimelineScreen(
      * somebody is fetched entire — and kept, so paging back and forth through an afternoon
      * asks for each one once rather than once per visit. Emptied when the viewer closes.
      */
-    val fetched = remember { mutableStateMapOf<String, Asset>() }
-    var details by remember { mutableStateOf<Asset?>(null) }
+    val fetched = remember(model) { mutableStateMapOf<String, Asset>() }
+    var details by remember(model) { mutableStateOf<Asset?>(null) }
     var scrubbing by remember { mutableStateOf(false) }
     var settle by remember { mutableStateOf<Job?>(null) }
     /** The day at the top of the viewport, which is what the thumb draws itself against. */
@@ -347,11 +350,16 @@ fun TimelineScreen(
         }
 
         var currentId by remember(tile.id) { mutableStateOf(tile.id) }
+        // Not cached: a photograph whose details failed once should try again the next
+        // time somebody swipes back to it, rather than being permanently actionless.
+        var failedId by remember(tile.id) { mutableStateOf<String?>(null) }
         val current = fetched[currentId]
+
         LaunchedEffect(currentId) {
             if (currentId !in fetched) {
                 runCatching { session.client.assets.get(currentId) }
                     .onSuccess { fetched[currentId] = it }
+                    .onFailure { failedId = currentId }
             }
         }
 
@@ -360,6 +368,7 @@ fun TimelineScreen(
             items = day,
             initialIndex = day.indexOfFirst { it.id == tile.id }.coerceAtLeast(0),
             current = current,
+            detailsUnavailable = failedId == currentId,
             mode = ViewerMode.Library,
             onPage = { currentId = it },
             onClose = {

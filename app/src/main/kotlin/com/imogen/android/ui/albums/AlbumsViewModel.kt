@@ -57,7 +57,10 @@ class AlbumsViewModel(private val session: Session) : ViewModel() {
                     _state.update { it.copy(albums = it.albums + album) }
                     then(album)
                 }
-                .onFailure { error -> _state.update { it.copy(error = describe(error)) } }
+                // A notice, not an error: `error` is the screen's empty-and-broken state
+                // and is drawn only when there are no albums, so a failed creation for
+                // anybody who already has one went nowhere at all.
+                .onFailure { error -> _state.update { it.copy(notice = describe(error)) } }
         }
     }
 

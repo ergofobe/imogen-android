@@ -61,12 +61,18 @@ fun PhotoBrowser(
 ) {
     val state by feed.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
-    var selection by remember { mutableStateOf<Selection>(Selection.Ids()) }
+
+    // Every one of these is keyed on the feed. This composable is re-invoked in the same
+    // slot with a different feed — a new search, another album in the two-pane layout —
+    // and a selection that survived that would be a filter aimed at the wrong query. It
+    // used to be a set of ids, which merely went stale; it is a query now, and a stale
+    // query is a bulk delete of something nobody is looking at.
+    var selection by remember(feed) { mutableStateOf<Selection>(Selection.Ids()) }
     /** How many photographs a "select all" holds, once the server has said. */
-    var matchedTotal by remember { mutableStateOf<Long?>(null) }
-    var confirmingTrash by remember { mutableStateOf<Long?>(null) }
-    var openedAt by remember { mutableStateOf<Int?>(null) }
-    var details by remember { mutableStateOf<Asset?>(null) }
+    var matchedTotal by remember(feed) { mutableStateOf<Long?>(null) }
+    var confirmingTrash by remember(feed) { mutableStateOf<Long?>(null) }
+    var openedAt by remember(feed) { mutableStateOf<Int?>(null) }
+    var details by remember(feed) { mutableStateOf<Asset?>(null) }
     val gridState = rememberLazyGridState()
 
     val selectedCount = selection.resolvedCount(matchedTotal)
@@ -99,6 +105,7 @@ fun PhotoBrowser(
                     session = session,
                     assets = state.items,
                     selection = selection,
+                    selecting = selecting,
                     columns = columns,
                     state = gridState,
                     contentPadding = contentPadding,

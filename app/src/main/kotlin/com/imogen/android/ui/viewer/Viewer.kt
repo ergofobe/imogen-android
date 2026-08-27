@@ -90,6 +90,12 @@ fun Viewer(
     current: Asset?,
     mode: ViewerMode,
     onPage: (String) -> Unit,
+    /**
+     * The photograph is on screen but the rest of it could not be fetched. Said out loud
+     * where the filename goes: the actions all need a whole asset, so without one they are
+     * disabled, and a row of dead buttons above a blank title explains nothing.
+     */
+    detailsUnavailable: Boolean = false,
     onClose: () -> Unit,
     onFavorite: (Asset, Boolean) -> Unit,
     onArchive: (Asset, Boolean) -> Unit,
@@ -163,7 +169,8 @@ fun Viewer(
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, "Close", tint = Color.White)
                 }
                 Text(
-                    text = loaded?.originalFilename.orEmpty(),
+                    text = loaded?.originalFilename
+                        ?: if (detailsUnavailable) "Details unavailable" else "",
                     color = Color.White,
                     maxLines = 1,
                     modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
