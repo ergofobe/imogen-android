@@ -81,15 +81,27 @@ class TimelineViewModel(
         recency.clear()
 
         viewModelScope.launch {
+            // A notice outlives the reload that follows the action it describes: a bulk
+            // trash refreshes the day counts, and replacing the state wholesale would
+            // throw away the sentence saying what had just happened before it was read.
             runCatching { session.client.assets.timeline(TimelineQuery(filter)) }
                 .onSuccess { timeline ->
-                    _state.value = TimelineState(
-                        index = TimelineIndex(timeline.buckets),
-                        loading = false,
-                    )
+                    _state.update {
+                        TimelineState(
+                            index = TimelineIndex(timeline.buckets),
+                            loading = false,
+                            notice = it.notice,
+                        )
+                    }
                 }
                 .onFailure { error ->
-                    _state.value = TimelineState(loading = false, error = describe(error))
+                    _state.update {
+                        TimelineState(
+                            loading = false,
+                            error = describe(error),
+                            notice = it.notice,
+                        )
+                    }
                 }
         }
     }

@@ -63,16 +63,24 @@ class AssetFeed(
         _state.update { it.copy(loading = true, error = null, exhausted = false) }
         viewModelScope.launch {
             runCatching { session.client.assets.list(query.copy(limit = PAGE)) }
+                // A notice outlives the reload that follows the action it describes:
+                // replacing the state wholesale would throw away the sentence saying what
+                // had just happened before anybody had read it.
                 .onSuccess { page ->
                     cursor = page.nextCursor
-                    _state.value = FeedState(
-                        items = page.items,
-                        loading = false,
-                        exhausted = page.nextCursor == null,
-                    )
+                    _state.update {
+                        FeedState(
+                            items = page.items,
+                            loading = false,
+                            exhausted = page.nextCursor == null,
+                            notice = it.notice,
+                        )
+                    }
                 }
                 .onFailure { error ->
-                    _state.value = FeedState(loading = false, error = describe(error))
+                    _state.update {
+                        FeedState(loading = false, error = describe(error), notice = it.notice)
+                    }
                 }
         }
     }
