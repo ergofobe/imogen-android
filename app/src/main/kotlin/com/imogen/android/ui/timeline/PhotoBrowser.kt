@@ -24,6 +24,7 @@ import com.imogen.android.ui.common.Loading
 import com.imogen.android.ui.viewer.DetailsSheet
 import com.imogen.android.ui.viewer.Viewer
 import com.imogen.android.ui.viewer.ViewerMode
+import com.imogen.android.ui.viewer.asViewerItem
 import com.imogen.sdk.Asset
 
 /**
@@ -119,11 +120,18 @@ fun PhotoBrowser(
     }
 
     openedAt?.let { index ->
+        val items = remember(state.items) { state.items.map { it.asViewerItem() } }
+        var currentId by remember { mutableStateOf(state.items.getOrNull(index)?.id) }
+
         Viewer(
             session = session,
-            assets = state.items,
+            items = items,
             initialIndex = index,
+            // Already fetched whole, and read from the feed rather than kept aside so an
+            // edit shows in the chrome the moment the feed applies it.
+            current = state.items.firstOrNull { it.id == currentId },
             mode = mode,
+            onPage = { currentId = it },
             onClose = { openedAt = null },
             onFavorite = feed::setFavorite,
             onArchive = feed::setArchived,

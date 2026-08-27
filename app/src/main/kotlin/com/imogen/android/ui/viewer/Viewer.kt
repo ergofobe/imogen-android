@@ -46,6 +46,24 @@ import com.imogen.android.data.Session
 import com.imogen.android.ui.common.AssetImage
 import com.imogen.sdk.Asset
 import com.imogen.sdk.AssetType
+import com.imogen.sdk.TimelineTile
+
+/**
+ * One page of the viewer: what it takes to draw the photograph and nothing more.
+ *
+ * The timeline pages through a day it holds as tiles, so the pager cannot be handed a list
+ * of assets — most of them have never been fetched. It is handed this instead, and the one
+ * photograph on screen is resolved to a full [Asset] by whoever opened the viewer.
+ */
+data class ViewerItem(
+    val id: String,
+    val type: AssetType,
+    val placeholderColor: String? = null,
+)
+
+fun Asset.asViewerItem(): ViewerItem = ViewerItem(id, type, placeholderColor)
+
+fun TimelineTile.asViewerItem(): ViewerItem = ViewerItem(id, type, placeholderColor)
 
 /**
  * One photograph, full screen, with the rest of them a swipe away.
@@ -54,13 +72,19 @@ import com.imogen.sdk.AssetType
  * photograph shown inside a frame of interface is a photograph you are looking at; a
  * photograph filling the screen is one you are looking into, and that is the difference
  * this screen exists to make.
+ *
+ * [current] is the fetched asset for the page on screen, and [onPage] says which page that
+ * is. The actions need a whole asset — its favourite and archived flags decide which icon
+ * to draw — so they appear as it arrives rather than acting on something half known.
  */
 @Composable
 fun Viewer(
     session: Session,
-    assets: List<Asset>,
+    items: List<ViewerItem>,
     initialIndex: Int,
+    current: Asset?,
     mode: ViewerMode,
+    onPage: (String) -> Unit,
     onClose: () -> Unit,
     onFavorite: (Asset, Boolean) -> Unit,
     onArchive: (Asset, Boolean) -> Unit,
@@ -68,20 +92,23 @@ fun Viewer(
     onRestore: (Asset) -> Unit,
     onDetails: (Asset) -> Unit,
 ) {
-    if (assets.isEmpty()) {
+    if (items.isEmpty()) {
         LaunchedEffect(Unit) { onClose() }
         return
     }
 
     val pager = rememberPagerState(
-        initialPage = initialIndex.coerceIn(0, assets.lastIndex),
-        pageCount = { assets.size },
+        initialPage = initialIndex.coerceIn(0, items.lastIndex),
+        pageCount = { items.size },
     )
     var chromeVisible by remember { mutableStateOf(true) }
 
     // Every photograph deleted from underneath the pager shortens the list. Closing when
     // it empties is the only sensible end to that.
-    LaunchedEffect(assets.size) { if (assets.isEmpty()) onClose() }
+    LaunchedEffect(items.size) { if (items.isEmpty()) onClose() }
+
+    val currentId = items.getOrNull(pager.currentPage)?.id
+    LaunchedEffect(currentId) { currentId?.let(onPage) }
 
     BackHandler(onBack = onClose)
 
@@ -96,19 +123,21 @@ fun Viewer(
             // pan across a zoomed photograph turns the page instead.
             userScrollEnabled = true,
         ) { page ->
-            val asset = assets.getOrNull(page) ?: return@HorizontalPager
-            if (asset.type == AssetType.VIDEO) {
-                VideoPage(session, asset, playing = pager.currentPage == page)
+            val item = items.getOrNull(page) ?: return@HorizontalPager
+            if (item.type == AssetType.VIDEO) {
+                VideoPage(session, item.id, playing = pager.currentPage == page)
             } else {
                 ZoomablePage(
                     session = session,
-                    asset = asset,
+                    item = item,
                     onTap = { chromeVisible = !chromeVisible },
                 )
             }
         }
 
-        val current = assets.getOrNull(pager.currentPage)
+        // Only while it is the asset for the page actually on screen. A swipe outruns the
+        // fetch, and a filename left over from the previous photograph is worse than none.
+        val current = current?.takeIf { it.id == currentId }
 
         AnimatedVisibility(
             visible = chromeVisible,
@@ -196,15 +225,15 @@ enum class ViewerMode { Library, Trash }
  * there, which is the failure mode of every zoom implementation that forgets to.
  */
 @Composable
-private fun ZoomablePage(session: Session, asset: Asset, onTap: () -> Unit) {
-    var scale by remember(asset.id) { mutableFloatStateOf(1f) }
-    var offsetX by remember(asset.id) { mutableFloatStateOf(0f) }
-    var offsetY by remember(asset.id) { mutableFloatStateOf(0f) }
+private fun ZoomablePage(session: Session, item: ViewerItem, onTap: () -> Unit) {
+    var scale by remember(item.id) { mutableFloatStateOf(1f) }
+    var offsetX by remember(item.id) { mutableFloatStateOf(0f) }
+    var offsetY by remember(item.id) { mutableFloatStateOf(0f) }
 
     Box(
         Modifier
             .fillMaxSize()
-            .pointerInput(asset.id) {
+            .pointerInput(item.id) {
                 detectTapGestures(
                     onTap = { onTap() },
                     onDoubleTap = {
@@ -218,7 +247,7 @@ private fun ZoomablePage(session: Session, asset: Asset, onTap: () -> Unit) {
                     },
                 )
             }
-            .pointerInput(asset.id) {
+            .pointerInput(item.id) {
                 detectTransformGestures { _, pan, zoom, _ ->
                     scale = (scale * zoom).coerceIn(1f, 6f)
                     if (scale > 1f) {
@@ -236,7 +265,8 @@ private fun ZoomablePage(session: Session, asset: Asset, onTap: () -> Unit) {
     ) {
         AssetImage(
             session = session,
-            asset = asset,
+            assetId = item.id,
+            placeholderColor = item.placeholderColor,
             variant = "preview",
             contentScale = ContentScale.Fit,
             modifier = Modifier

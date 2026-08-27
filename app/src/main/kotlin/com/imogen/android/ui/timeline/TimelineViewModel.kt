@@ -5,12 +5,12 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.imogen.android.data.Session
-import com.imogen.sdk.Asset
-import com.imogen.sdk.AssetQuery
-import com.imogen.sdk.AssetSort
+import com.imogen.sdk.AssetFilter
 import com.imogen.sdk.AssetUpdate
 import com.imogen.sdk.ImogenException
-import com.imogen.sdk.SortOrder
+import com.imogen.sdk.TimelineBucketQuery
+import com.imogen.sdk.TimelineQuery
+import com.imogen.sdk.TimelineTile
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,8 +20,8 @@ import kotlinx.coroutines.launch
 
 data class TimelineState(
     val index: TimelineIndex = TimelineIndex(emptyList()),
-    /** Loaded photographs, by day. Days nobody has looked at are simply absent. */
-    val days: Map<String, List<Asset>> = emptyMap(),
+    /** Loaded tiles, by day. Days nobody has looked at are simply absent. */
+    val days: Map<String, List<TimelineTile>> = emptyMap(),
     val loading: Boolean = true,
     val error: String? = null,
 )
@@ -33,10 +33,23 @@ data class TimelineState(
  * before a single one is fetched. Days are then loaded as they come into view, which
  * means jumping to a date five years back costs one request rather than four hundred.
  *
+ * What a day fetches is tiles, not assets. A cell draws an id, a colour, a play badge and
+ * a heart; an `Asset` would additionally carry a checksum, exif, filenames, mime types and
+ * both captured-at corrections, none of which a grid reads. Over a heavy month that is the
+ * difference between one round trip and several. The full asset is fetched for the one
+ * photograph somebody actually opens.
+ *
+ * [filter] scopes the whole screen — the day counts and the tiles both. An empty filter is
+ * the library; `AssetFilter(personId = …)` is one person's photographs, with the same day
+ * headings, the same rail and the same windowing.
+ *
  * Loaded days are capped and evicted oldest-touched-first. Scrolling a fifty-thousand
  * photograph library from end to end must not end with all fifty thousand in memory.
  */
-class TimelineViewModel(private val session: Session) : ViewModel() {
+class TimelineViewModel(
+    private val session: Session,
+    val filter: AssetFilter = AssetFilter(),
+) : ViewModel() {
 
     private val _state = MutableStateFlow(TimelineState())
     val state: StateFlow<TimelineState> = _state.asStateFlow()
@@ -58,7 +71,7 @@ class TimelineViewModel(private val session: Session) : ViewModel() {
         recency.clear()
 
         viewModelScope.launch {
-            runCatching { session.client.assets.timeline() }
+            runCatching { session.client.assets.timeline(TimelineQuery(filter)) }
                 .onSuccess { timeline ->
                     _state.value = TimelineState(
                         index = TimelineIndex(timeline.buckets),
@@ -81,23 +94,16 @@ class TimelineViewModel(private val session: Session) : ViewModel() {
         if (date in _state.value.days || date in inFlight) return
 
         inFlight[date] = viewModelScope.launch {
-            val (after, before) = dayBounds(date)
-            val collected = mutableListOf<Asset>()
+            val collected = mutableListOf<TimelineTile>()
             var cursor: String? = null
 
             runCatching {
-                // A day usually fits in one request. A wedding does not, so the loop is
-                // here — but it runs once for almost every day in almost every library.
+                // A day usually fits in one request. A scanned archive landing forty
+                // thousand photographs on one date does not, so the loop is here — but it
+                // runs once for almost every day in almost every library.
                 do {
-                    val page = session.client.assets.list(
-                        AssetQuery(
-                            takenAfter = after,
-                            takenBefore = before,
-                            cursor = cursor,
-                            limit = PAGE,
-                            sort = AssetSort.CAPTURED_AT,
-                            order = SortOrder.DESC,
-                        ),
+                    val page = session.client.assets.timelineBucket(
+                        TimelineBucketQuery(period = date, filter = filter, cursor = cursor),
                     )
                     collected += page.items
                     cursor = page.nextCursor
@@ -123,62 +129,78 @@ class TimelineViewModel(private val session: Session) : ViewModel() {
 
     // --- edits ---
 
-    fun setFavorite(asset: Asset, favorite: Boolean) =
-        edit(asset, AssetUpdate(favorite = favorite)) { it.copy(favorite = favorite) }
+    fun setFavorite(assetId: String, favorite: Boolean) {
+        replaceLocally(assetId) { it.copy(favorite = favorite) }
+        viewModelScope.launch {
+            runCatching { session.client.assets.update(assetId, AssetUpdate(favorite = favorite)) }
+                // A heart that stays filled on a server that refused the change is a lie
+                // the interface keeps telling.
+                .onFailure { replaceLocally(assetId) { it.copy(favorite = !favorite) } }
+        }
+    }
 
-    fun setArchived(asset: Asset, archived: Boolean) {
+    fun setArchived(assetId: String, archived: Boolean) {
         // Archiving takes it out of the timeline entirely — the server leaves archived
         // photographs out of the buckets, so the grid has to lose the cell as well.
-        removeLocally(listOf(asset))
+        removeLocally(setOf(assetId))
         viewModelScope.launch {
-            runCatching { session.client.assets.update(asset.id, AssetUpdate(archived = archived)) }
+            runCatching { session.client.assets.update(assetId, AssetUpdate(archived = archived)) }
                 .onFailure { refresh() }
         }
     }
 
-    fun setDescription(asset: Asset, description: String) =
-        edit(asset, AssetUpdate(description = description)) { it.copy(description = description) }
-
-    fun trash(assets: List<Asset>) {
-        if (assets.isEmpty()) return
-        removeLocally(assets)
+    /**
+     * A tile carries no description, so there is nothing here to change optimistically —
+     * the sheet that edited it has closed by the time this is sent.
+     */
+    fun setDescription(assetId: String, description: String) {
         viewModelScope.launch {
-            runCatching { session.client.assets.trash(assets.map { it.id }) }
+            runCatching {
+                session.client.assets.update(assetId, AssetUpdate(description = description))
+            }
+        }
+    }
+
+    fun trash(assetIds: List<String>) {
+        if (assetIds.isEmpty()) return
+        removeLocally(assetIds.toSet())
+        viewModelScope.launch {
+            runCatching { session.client.assets.trash(assetIds) }
                 .onFailure { refresh() }
         }
     }
 
-    private fun edit(asset: Asset, patch: AssetUpdate, optimistic: (Asset) -> Asset) {
-        replaceLocally(asset.id) { optimistic(it) }
-        viewModelScope.launch {
-            runCatching { session.client.assets.update(asset.id, patch) }
-                .onSuccess { updated -> replaceLocally(updated.id) { updated } }
-                .onFailure { replaceLocally(asset.id) { asset } }
-        }
-    }
-
-    private fun replaceLocally(assetId: String, change: (Asset) -> Asset) {
+    private fun replaceLocally(assetId: String, change: (TimelineTile) -> TimelineTile) {
         _state.update { state ->
             state.copy(
-                days = state.days.mapValues { (_, assets) ->
-                    if (assets.none { it.id == assetId }) {
-                        assets
+                days = state.days.mapValues { (_, tiles) ->
+                    if (tiles.none { it.id == assetId }) {
+                        tiles
                     } else {
-                        assets.map { if (it.id == assetId) change(it) else it }
+                        tiles.map { if (it.id == assetId) change(it) else it }
                     }
                 },
             )
         }
     }
 
-    private fun removeLocally(assets: List<Asset>) {
-        val ids = assets.mapTo(mutableSetOf()) { it.id }
-        val perDay = assets.groupingBy { it.capturedAt.take(10) }.eachCount()
-
+    /**
+     * Takes photographs out of the grid at once, shortening the days they came from.
+     *
+     * The counts come from the loaded days rather than from the tiles' own dates: a day is
+     * keyed by the bucket the server filed it under, and re-deriving that key from an
+     * instant is how a photograph taken near midnight ends up decrementing the wrong one.
+     */
+    private fun removeLocally(assetIds: Set<String>) {
+        if (assetIds.isEmpty()) return
         _state.update { state ->
+            val perDay = state.days
+                .mapValues { (_, tiles) -> tiles.count { it.id in assetIds } }
+                .filterValues { it > 0 }
+
             state.copy(
                 index = state.index.withoutPhotos(perDay),
-                days = state.days.mapValues { (_, day) -> day.filterNot { it.id in ids } },
+                days = state.days.mapValues { (_, tiles) -> tiles.filterNot { it.id in assetIds } },
             )
         }
     }
@@ -189,17 +211,14 @@ class TimelineViewModel(private val session: Session) : ViewModel() {
     }
 
     companion object {
-        /** The API's own ceiling. Asking for more is refused rather than truncated. */
-        private const val PAGE = 500
-
         /**
          * Roughly two thousand photographs on a typical library, which is more than any
          * screen shows and few enough to hold without thinking about it.
          */
         private const val MAX_LOADED_DAYS = 60
 
-        fun factory(session: Session) = viewModelFactory {
-            initializer { TimelineViewModel(session) }
+        fun factory(session: Session, filter: AssetFilter = AssetFilter()) = viewModelFactory {
+            initializer { TimelineViewModel(session, filter) }
         }
     }
 }

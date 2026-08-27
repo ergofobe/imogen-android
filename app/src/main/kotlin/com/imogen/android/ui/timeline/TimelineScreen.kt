@@ -55,8 +55,10 @@ import com.imogen.android.ui.common.SelectionBar
 import com.imogen.android.ui.viewer.DetailsSheet
 import com.imogen.android.ui.viewer.Viewer
 import com.imogen.android.ui.viewer.ViewerMode
+import com.imogen.android.ui.viewer.asViewerItem
 import com.imogen.sdk.Asset
 import com.imogen.sdk.AssetType
+import com.imogen.sdk.TimelineTile
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -80,6 +82,9 @@ fun TimelineScreen(
     columns: Int,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
+    emptyHeadline: String = "Your library is empty",
+    emptyBody: String = "Turn on backup, or add photographs from another device — they " +
+        "will appear here, newest first.",
     onAddToAlbum: ((List<String>) -> Unit)? = null,
 ) {
     val state by model.state.collectAsStateWithLifecycle()
@@ -87,7 +92,7 @@ fun TimelineScreen(
     val scope = rememberCoroutineScope()
 
     var selection by remember { mutableStateOf(emptySet<String>()) }
-    var opened by remember { mutableStateOf<Asset?>(null) }
+    var opened by remember { mutableStateOf<TimelineTile?>(null) }
     var details by remember { mutableStateOf<Asset?>(null) }
     var scrubbing by remember { mutableStateOf(false) }
     var settle by remember { mutableStateOf<Job?>(null) }
@@ -105,12 +110,7 @@ fun TimelineScreen(
         return
     }
     if (state.index.isEmpty) {
-        EmptyState(
-            "Your library is empty",
-            "Turn on backup, or add photographs from another device — they will appear " +
-                "here, newest first.",
-            modifier,
-        )
+        EmptyState(emptyHeadline, emptyBody, modifier)
         return
     }
 
@@ -202,23 +202,23 @@ fun TimelineScreen(
                 if (index.isHeader(entry)) {
                     DayHeading(date, index.buckets[bucket].count)
                 } else {
-                    val asset = state.days[date]?.getOrNull(index.offsetInBucket(entry))
-                    if (asset == null) {
+                    val tile = state.days[date]?.getOrNull(index.offsetInBucket(entry))
+                    if (tile == null) {
                         PendingTile()
                     } else {
-                        TimelineTile(
+                        PhotoTile(
                             session = session,
-                            asset = asset,
-                            selected = asset.id in selection,
+                            tile = tile,
+                            selected = tile.id in selection,
                             selecting = selection.isNotEmpty(),
                             onClick = {
                                 if (selection.isNotEmpty()) {
-                                    selection = selection.toggled(asset.id)
+                                    selection = selection.toggled(tile.id)
                                 } else {
-                                    opened = asset
+                                    opened = tile
                                 }
                             },
-                            onLongClick = { selection = selection.toggled(asset.id) },
+                            onLongClick = { selection = selection.toggled(tile.id) },
                         )
                     }
                 }
@@ -252,11 +252,11 @@ fun TimelineScreen(
                 count = selection.size,
                 onClear = { selection = emptySet() },
                 onFavourite = {
-                    selectedAssets(state, selection).forEach { model.setFavorite(it, true) }
+                    selection.forEach { model.setFavorite(it, true) }
                     selection = emptySet()
                 },
                 onTrash = {
-                    model.trash(selectedAssets(state, selection))
+                    model.trash(selection.toList())
                     selection = emptySet()
                 },
                 onAddToAlbum = onAddToAlbum?.let {
@@ -269,20 +269,42 @@ fun TimelineScreen(
         }
     }
 
-    opened?.let { asset ->
+    opened?.let { tile ->
         // The viewer pages through the day it was opened from. Handing it fifty thousand
-        // assets is not possible — most of them are not loaded — and a day is the unit
-        // somebody is looking through anyway.
-        val day = state.days[asset.capturedAt.take(10)].orEmpty()
+        // photographs is not possible — most of them are not loaded — and a day is the
+        // unit somebody is looking through anyway.
+        val day = remember(state.days, tile.capturedAt) {
+            state.days[tile.capturedAt.take(10)].orEmpty().map { it.asViewerItem() }
+        }
+
+        // A tile has no exif, no filename and no size, so the photograph in front of
+        // somebody is fetched whole. One request per photograph opened, rather than a
+        // whole day of them fetched on the chance that one is.
+        var currentId by remember { mutableStateOf(tile.id) }
+        var current by remember { mutableStateOf<Asset?>(null) }
+        LaunchedEffect(currentId) {
+            current = runCatching { session.client.assets.get(currentId) }.getOrNull()
+        }
+
         Viewer(
             session = session,
-            assets = day,
-            initialIndex = day.indexOfFirst { it.id == asset.id }.coerceAtLeast(0),
+            items = day,
+            initialIndex = day.indexOfFirst { it.id == tile.id }.coerceAtLeast(0),
+            current = current,
             mode = ViewerMode.Library,
+            onPage = { currentId = it },
             onClose = { opened = null },
-            onFavorite = model::setFavorite,
-            onArchive = model::setArchived,
-            onTrash = { model.trash(listOf(it)) },
+            // The fetched asset is what the chrome draws its icons from, so it moves with
+            // the tile rather than waiting for the next photograph to be opened.
+            onFavorite = { asset, favorite ->
+                model.setFavorite(asset.id, favorite)
+                current = asset.copy(favorite = favorite)
+            },
+            onArchive = { asset, archived ->
+                model.setArchived(asset.id, archived)
+                current = asset.copy(archived = archived)
+            },
+            onTrash = { model.trash(listOf(it.id)) },
             onRestore = {},
             onDetails = { details = it },
         )
@@ -293,7 +315,7 @@ fun TimelineScreen(
             asset = asset,
             onDismiss = { details = null },
             onDescriptionChanged = {
-                model.setDescription(asset, it)
+                model.setDescription(asset.id, it)
                 details = null
             },
         )
@@ -302,9 +324,6 @@ fun TimelineScreen(
 
 private fun Set<String>.toggled(id: String): Set<String> =
     if (id in this) this - id else this + id
-
-private fun selectedAssets(state: TimelineState, selection: Set<String>): List<Asset> =
-    state.days.values.flatten().filter { it.id in selection }
 
 @Composable
 private fun DayHeading(date: String, count: Long) {
@@ -337,9 +356,9 @@ private fun PendingTile() {
 }
 
 @Composable
-private fun TimelineTile(
+private fun PhotoTile(
     session: Session,
-    asset: Asset,
+    tile: TimelineTile,
     selected: Boolean,
     selecting: Boolean,
     onClick: () -> Unit,
@@ -352,9 +371,9 @@ private fun TimelineTile(
             .clip(RoundedCornerShape(2.dp))
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
     ) {
-        AssetImage(session, asset, "thumbnail", Modifier.fillMaxSize())
+        AssetImage(session, tile.id, tile.placeholderColor, "thumbnail", Modifier.fillMaxSize())
 
-        if (asset.type == AssetType.VIDEO) {
+        if (tile.type == AssetType.VIDEO) {
             Icon(
                 Icons.Filled.PlayCircleFilled,
                 contentDescription = "Video",
@@ -362,7 +381,7 @@ private fun TimelineTile(
                 modifier = Modifier.align(Alignment.Center).size(28.dp),
             )
         }
-        if (asset.favorite && !selecting) {
+        if (tile.favorite && !selecting) {
             Icon(
                 Icons.Filled.Favorite,
                 contentDescription = "Favourite",

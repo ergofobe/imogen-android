@@ -19,7 +19,41 @@ import com.imogen.sdk.Asset
  * The placeholder is the asset's own dominant colour, which the server computed when it
  * made the thumbnail. A grid of grey rectangles resolving into photographs looks like a
  * page failing to load; a grid of the right colours looks like the photographs arriving.
+ *
+ * An id and a colour rather than an [Asset], because a grid tile carries both and carries
+ * nothing else this needs — asking for a whole asset here would be asking a caller to
+ * fetch a checksum in order to draw a thumbnail.
  */
+@Composable
+fun AssetImage(
+    session: Session,
+    assetId: String,
+    placeholderColor: String?,
+    variant: String,
+    modifier: Modifier = Modifier,
+    contentScale: ContentScale = ContentScale.Crop,
+    contentDescription: String? = null,
+) {
+    val placeholder = placeholderColor?.let(::parseHexColor)
+        ?: MaterialTheme.colorScheme.surfaceVariant
+
+    Box(modifier.background(placeholder)) {
+        AsyncImage(
+            model = ImageRequest.Builder(coil3.compose.LocalPlatformContext.current)
+                .data(session.assetUrl(assetId, variant))
+                // Two accounts can hold the same asset id. Without the account in the key
+                // the cache would answer one server's request with the other's photograph.
+                .memoryCacheKey("${session.accountId}:$assetId:$variant")
+                .diskCacheKey("${session.accountId}:$assetId:$variant")
+                .build(),
+            imageLoader = session.imageLoader,
+            contentDescription = contentDescription,
+            contentScale = contentScale,
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
+}
+
 @Composable
 fun AssetImage(
     session: Session,
@@ -28,26 +62,15 @@ fun AssetImage(
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Crop,
     contentDescription: String? = null,
-) {
-    val placeholder = asset.placeholderColor?.let(::parseHexColor)
-        ?: MaterialTheme.colorScheme.surfaceVariant
-
-    Box(modifier.background(placeholder)) {
-        AsyncImage(
-            model = ImageRequest.Builder(coil3.compose.LocalPlatformContext.current)
-                .data(session.assetUrl(asset.id, variant))
-                // Two accounts can hold the same asset id. Without the account in the key
-                // the cache would answer one server's request with the other's photograph.
-                .memoryCacheKey("${session.accountId}:${asset.id}:$variant")
-                .diskCacheKey("${session.accountId}:${asset.id}:$variant")
-                .build(),
-            imageLoader = session.imageLoader,
-            contentDescription = contentDescription ?: asset.description ?: asset.originalFilename,
-            contentScale = contentScale,
-            modifier = Modifier.fillMaxSize(),
-        )
-    }
-}
+) = AssetImage(
+    session = session,
+    assetId = asset.id,
+    placeholderColor = asset.placeholderColor,
+    variant = variant,
+    modifier = modifier,
+    contentScale = contentScale,
+    contentDescription = contentDescription ?: asset.description ?: asset.originalFilename,
+)
 
 /** `#rrggbb`, which is what the server sends. Anything else falls back to the theme. */
 fun parseHexColor(value: String): Color? {
