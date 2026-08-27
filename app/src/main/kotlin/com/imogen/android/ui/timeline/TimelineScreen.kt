@@ -106,6 +106,8 @@ fun TimelineScreen(
     var selection by remember(model) { mutableStateOf<Selection>(Selection.Ids()) }
     /** How many photographs a "select all" holds, once the server has said. */
     var matchedTotal by remember(model) { mutableStateOf<Long?>(null) }
+    /** Which count is the current one, so a slow answer cannot overwrite a newer question. */
+    var countRequest by remember(model) { mutableIntStateOf(0) }
     var confirmingTrash by remember(model) { mutableStateOf<Long?>(null) }
     /** The day a photograph was opened from, and the photograph. */
     var opened by remember(model) { mutableStateOf<Pair<String, TimelineTile>?>(null) }
@@ -130,13 +132,24 @@ fun TimelineScreen(
 
     LaunchedEffect(state.notice) {
         val notice = state.notice ?: return@LaunchedEffect
-        snackbar.showSnackbar(notice)
-        model.clearNotice()
+        // Cleared even if the wait is cut short. `showSnackbar` suspends for as long as the
+        // snackbar is up, and leaving the screen inside that window used to leave the notice
+        // sitting in a retained view model — so it fired again on the way back, and again.
+        try {
+            snackbar.showSnackbar(notice)
+        } finally {
+            model.clearNotice()
+        }
     }
 
     BackHandler(enabled = selecting) { selection = Selection.Ids() }
 
-    if (state.loading) {
+    // Only while there is nothing to show. A reload with an index already in hand is what
+    // follows every bulk action and every failed edit, and blanking the screen for it takes
+    // the grid, the scrubber and — because they are composed below — the open photograph
+    // and its details sheet with it. A failed archive would put somebody back at the
+    // photograph they opened, pages from where they had swiped to.
+    if (state.loading && state.index.isEmpty) {
         Loading(modifier)
         return
     }
@@ -314,16 +327,26 @@ fun TimelineScreen(
                     }
                 },
                 onSelectAll = {
-                    val all = Selection.Matching(model.filter)
-                    selection = all
+                    selection = Selection.Matching(model.filter)
                     matchedTotal = null
+                    // Which count this is. Identity of the selection object cannot answer
+                    // that: unticking one photograph replaces it, so a guard comparing
+                    // instances would decline to clean up after its own failure and leave
+                    // the bar counting for ever.
+                    val request = ++countRequest
                     scope.launch {
                         runCatching { countMatching(session, model.filter) }
-                            .onSuccess { matchedTotal = it }
-                            // Without a count there is nothing honest to offer, so the
-                            // selection goes back to being the ones actually ticked —
-                            // unless somebody has moved on and ticked some since.
-                            .onFailure { if (selection === all) selection = Selection.Ids() }
+                            .onSuccess { if (request == countRequest) matchedTotal = it }
+                            // Without a count there is nothing honest to offer, so a
+                            // by-query selection goes away — and says so, rather than
+                            // vanishing from under the finger that asked for it. A
+                            // selection ticked by hand since is somebody else's and stays.
+                            .onFailure {
+                                if (request == countRequest && selection is Selection.Matching) {
+                                    selection = Selection.Ids()
+                                    snackbar.showSnackbar("Could not count that selection")
+                                }
+                            }
                     }
                 },
             )

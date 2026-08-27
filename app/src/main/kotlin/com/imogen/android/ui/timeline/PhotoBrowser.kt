@@ -10,6 +10,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -71,6 +72,8 @@ fun PhotoBrowser(
     var selection by remember(feed) { mutableStateOf<Selection>(Selection.Ids()) }
     /** How many photographs a "select all" holds, once the server has said. */
     var matchedTotal by remember(feed) { mutableStateOf<Long?>(null) }
+    /** Which count is the current one, so a slow answer cannot overwrite a newer question. */
+    var countRequest by remember(feed) { mutableIntStateOf(0) }
     var confirmingTrash by remember(feed) { mutableStateOf<Long?>(null) }
     var openedAt by remember(feed) { mutableStateOf<Int?>(null) }
     var details by remember(feed) { mutableStateOf<Asset?>(null) }
@@ -82,8 +85,13 @@ fun PhotoBrowser(
 
     LaunchedEffect(state.notice) {
         val notice = state.notice ?: return@LaunchedEffect
-        snackbar.showSnackbar(notice)
-        feed.clearNotice()
+        // Cleared even if the wait is cut short, so a notice cannot outlive the screen that
+        // was showing it and fire again on the way back.
+        try {
+            snackbar.showSnackbar(notice)
+        } finally {
+            feed.clearNotice()
+        }
     }
 
     // Escaping a selection is the commonest thing somebody wants back out of, so it takes
@@ -156,16 +164,26 @@ fun PhotoBrowser(
                     }
                 },
                 onSelectAll = {
-                    val all = Selection.Matching(feed.filter)
-                    selection = all
+                    selection = Selection.Matching(feed.filter)
                     matchedTotal = null
+                    // Which count this is. Identity of the selection object cannot answer
+                    // that: unticking one photograph replaces it, so a guard comparing
+                    // instances would decline to clean up after its own failure and leave
+                    // the bar counting for ever.
+                    val request = ++countRequest
                     scope.launch {
                         runCatching { countMatching(session, feed.filter) }
-                            .onSuccess { matchedTotal = it }
-                            // Without a count there is nothing honest to offer, so the
-                            // selection goes back to being the ones actually ticked —
-                            // unless somebody has moved on and ticked some since.
-                            .onFailure { if (selection === all) selection = Selection.Ids() }
+                            .onSuccess { if (request == countRequest) matchedTotal = it }
+                            // Without a count there is nothing honest to offer, so a
+                            // by-query selection goes away — and says so, rather than
+                            // vanishing from under the finger that asked for it. A
+                            // selection ticked by hand since is somebody else's and stays.
+                            .onFailure {
+                                if (request == countRequest && selection is Selection.Matching) {
+                                    selection = Selection.Ids()
+                                    snackbar.showSnackbar("Could not count that selection")
+                                }
+                            }
                     }
                 },
             )

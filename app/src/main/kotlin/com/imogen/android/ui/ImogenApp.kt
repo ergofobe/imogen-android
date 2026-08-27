@@ -232,8 +232,13 @@ private fun Content(
     // selection is gone by the time the server answers.
     LaunchedEffect(albumsState.notice) {
         val notice = albumsState.notice ?: return@LaunchedEffect
-        snackbar.showSnackbar(notice)
-        albums.clearNotice()
+        // Cleared even if the wait is cut short, so a notice cannot outlive the screen that
+        // was showing it and fire again on the way back.
+        try {
+            snackbar.showSnackbar(notice)
+        } finally {
+            albums.clearNotice()
+        }
     }
 
     var pickingAlbumFor by remember { mutableStateOf<AssetSelection?>(null) }

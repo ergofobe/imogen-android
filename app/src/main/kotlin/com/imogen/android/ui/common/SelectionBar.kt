@@ -62,13 +62,19 @@ fun SelectionBar(
             onSelectAll?.let {
                 IconButton(onClick = it) { Icon(Icons.Filled.SelectAll, "Select all") }
             }
+            // Nothing bulk while the number is still coming. A selection nobody can put a
+            // figure to is not one to act on, whichever way the action points.
             if (trash) {
                 onRestore?.let {
-                    IconButton(onClick = it) { Icon(Icons.Filled.Restore, "Put back") }
+                    IconButton(onClick = it, enabled = count != null) {
+                        Icon(Icons.Filled.Restore, "Put back")
+                    }
                 }
             } else {
                 onAddToAlbum?.let {
-                    IconButton(onClick = it) { Icon(Icons.Filled.LibraryAdd, "Add to album") }
+                    IconButton(onClick = it, enabled = count != null) {
+                        Icon(Icons.Filled.LibraryAdd, "Add to album")
+                    }
                 }
                 onFavourite?.let {
                     IconButton(onClick = it) { Icon(Icons.Filled.Favorite, "Favourite") }

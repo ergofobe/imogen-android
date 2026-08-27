@@ -194,7 +194,7 @@ class TimelineViewModel(
     fun trash(selection: AssetSelection) {
         val assetIds = selection.assetIds
         if (assetIds != null && assetIds.isEmpty()) return
-        assetIds?.let { removeLocally(it.toSet()) }
+        val accounted = assetIds?.let { removeLocally(it.toSet()) }
 
         viewModelScope.launch {
             runCatching { session.client.assets.trash(selection) }
@@ -202,6 +202,11 @@ class TimelineViewModel(
                     if (assetIds == null) {
                         refresh()
                         _state.update { it.copy(notice = trashedMessage(count)) }
+                    } else if (accounted != assetIds.size) {
+                        // Some of them were in a day that had been evicted, so their
+                        // buckets still claim them. Only the server can say what the counts
+                        // are now.
+                        refresh()
                     }
                 }
                 .onFailure { error ->
@@ -233,19 +238,27 @@ class TimelineViewModel(
      * The counts come from the loaded days rather than from the tiles' own dates: a day is
      * keyed by the bucket the server filed it under, and re-deriving that key from an
      * instant is how a photograph taken near midnight ends up decrementing the wrong one.
+     *
+     * That key is only recoverable while the day is loaded, so this returns how many of
+     * [assetIds] it could actually account for. A photograph whose day was evicted between
+     * the tick and the trash is not one of them, and its bucket would otherwise keep
+     * claiming a count it no longer has — leaving a cell that stays grey for ever, because
+     * the refetched day is one tile short of what the index still asks for.
      */
-    private fun removeLocally(assetIds: Set<String>) {
-        if (assetIds.isEmpty()) return
-        _state.update { state ->
-            val perDay = state.days
-                .mapValues { (_, tiles) -> tiles.count { it.id in assetIds } }
-                .filterValues { it > 0 }
+    private fun removeLocally(assetIds: Set<String>): Int {
+        if (assetIds.isEmpty()) return 0
 
+        val perDay = _state.value.days
+            .mapValues { (_, tiles) -> tiles.count { it.id in assetIds } }
+            .filterValues { it > 0 }
+
+        _state.update { state ->
             state.copy(
                 index = state.index.withoutPhotos(perDay),
                 days = state.days.mapValues { (_, tiles) -> tiles.filterNot { it.id in assetIds } },
             )
         }
+        return perDay.values.sum()
     }
 
     private fun describe(error: Throwable): String = when (error) {
