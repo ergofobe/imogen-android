@@ -3,6 +3,7 @@ package com.imogen.android.ui
 import com.imogen.android.ui.common.Selection
 import com.imogen.android.ui.common.resolvedCount
 import com.imogen.android.ui.common.restoredMessage
+import com.imogen.android.ui.common.ticked
 import com.imogen.android.ui.common.toFilter
 import com.imogen.android.ui.common.trashedMessage
 import com.imogen.sdk.AssetFilter
@@ -84,6 +85,29 @@ class SelectionTest {
         assertEquals(10L, matching.resolvedCount(12L))
         // Nothing counted yet: the interface says so rather than guessing.
         assertNull(matching.resolvedCount(null))
+    }
+
+    @Test
+    fun `a tick made while nothing is selected starts again`() {
+        // Unticking a "select all" down to nothing leaves a Matching holding exceptions and
+        // no photographs. Toggling from there only lengthens the exceptions, so the count
+        // stays at nought and the selection bar never comes back.
+        val emptied = Selection.Matching(AssetFilter(), setOf("a", "b"))
+        assertEquals(0L, emptied.resolvedCount(2L))
+
+        val restarted = emptied.ticked("c", selecting = false)
+        assertEquals(Selection.Ids(setOf("c")), restarted)
+        assertEquals(1L, restarted.resolvedCount(2L))
+    }
+
+    @Test
+    fun `a tick made during a selection is an ordinary toggle`() {
+        val ids = Selection.Ids(setOf("a"))
+        assertEquals(Selection.Ids(setOf("a", "b")), ids.ticked("b", selecting = true))
+        assertEquals(Selection.Ids(), ids.ticked("a", selecting = true))
+
+        val matching = Selection.Matching(AssetFilter())
+        assertEquals(Selection.Matching(AssetFilter(), setOf("a")), matching.ticked("a", true))
     }
 
     @Test

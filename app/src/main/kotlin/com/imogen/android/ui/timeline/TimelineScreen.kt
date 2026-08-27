@@ -58,6 +58,7 @@ import com.imogen.android.ui.common.Selection
 import com.imogen.android.ui.common.SelectionBar
 import com.imogen.android.ui.common.countMatching
 import com.imogen.android.ui.common.resolvedCount
+import com.imogen.android.ui.common.ticked
 import com.imogen.android.ui.viewer.DetailsSheet
 import com.imogen.android.ui.viewer.Viewer
 import com.imogen.android.ui.viewer.ViewerMode
@@ -254,7 +255,7 @@ fun TimelineScreen(
                                     opened = date to tile
                                 }
                             },
-                            onLongClick = { selection = selection.toggled(tile.id) },
+                            onLongClick = { selection = selection.ticked(tile.id, selecting) },
                         )
                     }
                 }

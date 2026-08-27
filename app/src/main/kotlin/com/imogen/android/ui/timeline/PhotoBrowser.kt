@@ -28,6 +28,7 @@ import com.imogen.android.ui.common.ErrorState
 import com.imogen.android.ui.common.Loading
 import com.imogen.android.ui.common.countMatching
 import com.imogen.android.ui.common.resolvedCount
+import com.imogen.android.ui.common.ticked
 import com.imogen.android.ui.viewer.DetailsSheet
 import com.imogen.android.ui.viewer.Viewer
 import com.imogen.android.ui.viewer.ViewerMode
@@ -110,7 +111,7 @@ fun PhotoBrowser(
                     state = gridState,
                     contentPadding = contentPadding,
                     onOpen = { openedAt = it },
-                    onToggleSelection = { asset -> selection = selection.toggled(asset.id) },
+                    onToggleSelection = { asset -> selection = selection.ticked(asset.id, selecting) },
                     onNearEnd = feed::loadMore,
                 )
             }

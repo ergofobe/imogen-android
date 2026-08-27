@@ -62,6 +62,17 @@ sealed interface Selection {
 }
 
 /**
+ * A tick, from a screen that knows whether a selection is under way.
+ *
+ * Unticking a "select all" down to nothing leaves a [Selection.Matching] holding a list of
+ * exceptions and no photographs, and no further tick climbs back out of that: every one of
+ * them only lengthens the list, so the count stays at nought and the bar stays away. A tick
+ * made while nothing is selected therefore starts again, from the one that was tapped.
+ */
+fun Selection.ticked(assetId: String, selecting: Boolean): Selection =
+    if (selecting) toggled(assetId) else Selection.Ids(setOf(assetId))
+
+/**
  * How many photographs a selection holds, or null while that is still being asked.
  *
  * A by-query selection knows its own subtractions but not its total, so [matchedTotal] is
