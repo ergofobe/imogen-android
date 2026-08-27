@@ -5,8 +5,11 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.imogen.android.data.Session
+import com.imogen.android.ui.common.toFilter
 import com.imogen.sdk.Asset
+import com.imogen.sdk.AssetFilter
 import com.imogen.sdk.AssetQuery
+import com.imogen.sdk.AssetSelection
 import com.imogen.sdk.AssetUpdate
 import com.imogen.sdk.ImogenException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -41,6 +44,9 @@ class AssetFeed(
 
     private val _state = MutableStateFlow(FeedState())
     val state: StateFlow<FeedState> = _state.asStateFlow()
+
+    /** What this feed is showing, as a filter a bulk mutation can be aimed at. */
+    val filter: AssetFilter = query.toFilter()
 
     private var cursor: String? = null
 
@@ -102,20 +108,29 @@ class AssetFeed(
         edit(asset, AssetUpdate(description = description)) { it.copy(description = description) }
 
     /** Moves photographs to the trash, where they wait rather than being destroyed. */
-    fun trash(ids: List<String>) {
-        val removed = _state.value.items.filter { it.id in ids }
-        _state.update { it.copy(items = it.items.filterNot { asset -> asset.id in ids }) }
-        viewModelScope.launch {
-            runCatching { session.client.assets.trash(ids) }
-                .onFailure { putBack(removed) }
-        }
-    }
+    fun trash(selection: AssetSelection) =
+        mutate(selection) { session.client.assets.trash(it) }
 
-    fun restore(ids: List<String>) {
-        val removed = _state.value.items.filter { it.id in ids }
-        _state.update { it.copy(items = it.items.filterNot { asset -> asset.id in ids }) }
+    fun restore(selection: AssetSelection) =
+        mutate(selection) { session.client.assets.restore(it) }
+
+    /**
+     * A list of ids leaves the feed at once and comes back if the server refuses. A query
+     * cannot be applied here — what it matches is mostly unfetched — so the feed is simply
+     * loaded again once the server has acted.
+     */
+    private fun mutate(selection: AssetSelection, act: suspend (AssetSelection) -> Long) {
+        val ids = selection.assetIds?.toSet()
+        if (ids != null && ids.isEmpty()) return
+
+        val removed = if (ids == null) emptyList() else _state.value.items.filter { it.id in ids }
+        if (ids != null) {
+            _state.update { it.copy(items = it.items.filterNot { asset -> asset.id in ids }) }
+        }
+
         viewModelScope.launch {
-            runCatching { session.client.assets.restore(ids) }
+            runCatching { act(selection) }
+                .onSuccess { if (ids == null) refresh() }
                 .onFailure { putBack(removed) }
         }
     }

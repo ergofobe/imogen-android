@@ -8,6 +8,7 @@ import com.imogen.android.data.Session
 import com.imogen.sdk.Album
 import com.imogen.sdk.AlbumCreate
 import com.imogen.sdk.AlbumUpdate
+import com.imogen.sdk.AssetSelection
 import com.imogen.sdk.ImogenException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -43,9 +44,9 @@ class AlbumsViewModel(private val session: Session) : ViewModel() {
         }
     }
 
-    fun create(name: String, assetIds: List<String>? = null, then: (Album) -> Unit = {}) {
+    fun create(name: String, then: (Album) -> Unit = {}) {
         viewModelScope.launch {
-            runCatching { session.client.albums.create(AlbumCreate(name = name, assetIds = assetIds)) }
+            runCatching { session.client.albums.create(AlbumCreate(name = name)) }
                 .onSuccess { album ->
                     _state.update { it.copy(albums = it.albums + album) }
                     then(album)
@@ -77,10 +78,13 @@ class AlbumsViewModel(private val session: Session) : ViewModel() {
     /**
      * Adding is idempotent server-side, and the result says what actually changed — so a
      * photograph already in the album is reported as skipped rather than as added twice.
+     *
+     * Takes a selection rather than a list, so "everything this search found" goes over as
+     * the search rather than as however many thousand uuids it matched.
      */
-    fun addAssets(albumId: String, assetIds: List<String>) {
+    fun addAssets(albumId: String, selection: AssetSelection) {
         viewModelScope.launch {
-            runCatching { session.client.albums.addAssets(albumId, assetIds) }
+            runCatching { session.client.albums.addAssets(albumId, selection) }
                 .onSuccess { result ->
                     _state.update { state ->
                         state.copy(

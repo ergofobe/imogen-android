@@ -6,6 +6,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.imogen.android.data.Session
 import com.imogen.sdk.AssetFilter
+import com.imogen.sdk.AssetSelection
 import com.imogen.sdk.AssetUpdate
 import com.imogen.sdk.ImogenException
 import com.imogen.sdk.TimelineBucketQuery
@@ -161,11 +162,22 @@ class TimelineViewModel(
         }
     }
 
-    fun trash(assetIds: List<String>) {
-        if (assetIds.isEmpty()) return
-        removeLocally(assetIds.toSet())
+    /**
+     * Moves photographs to the trash, by id or by query.
+     *
+     * A list of ids can leave the grid at once, because the cells it names are known. A
+     * query cannot — most of what it matches was never loaded — so the day counts are
+     * fetched again once the server has acted, which is the only honest way to shorten a
+     * grid by a number nobody here knows.
+     */
+    fun trash(selection: AssetSelection) {
+        val assetIds = selection.assetIds
+        if (assetIds != null && assetIds.isEmpty()) return
+        assetIds?.let { removeLocally(it.toSet()) }
+
         viewModelScope.launch {
-            runCatching { session.client.assets.trash(assetIds) }
+            runCatching { session.client.assets.trash(selection) }
+                .onSuccess { if (assetIds == null) refresh() }
                 .onFailure { refresh() }
         }
     }

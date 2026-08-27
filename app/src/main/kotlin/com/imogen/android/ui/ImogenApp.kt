@@ -57,6 +57,7 @@ import com.imogen.android.ui.timeline.TimelineViewModel
 import com.imogen.android.ui.timeline.columnsFor
 import com.imogen.android.ui.viewer.ViewerMode
 import com.imogen.sdk.AssetQuery
+import com.imogen.sdk.AssetSelection
 
 /**
  * The whole application, above the individual screens.
@@ -235,8 +236,8 @@ private fun Content(
         albums.clearNotice()
     }
 
-    var pickingAlbumFor by remember { mutableStateOf<List<String>?>(null) }
-    val addToAlbum: (List<String>) -> Unit = { pickingAlbumFor = it }
+    var pickingAlbumFor by remember { mutableStateOf<AssetSelection?>(null) }
+    val addToAlbum: (AssetSelection) -> Unit = { pickingAlbumFor = it }
 
     when (overlay) {
         is Overlay.AddAccount -> {
@@ -409,16 +410,18 @@ private fun Content(
         )
     }
 
-    pickingAlbumFor?.let { assetIds ->
+    pickingAlbumFor?.let { selection ->
         com.imogen.android.ui.albums.AlbumPicker(
             albums = albumsState.albums,
             onDismiss = { pickingAlbumFor = null },
             onChoose = { album ->
-                albums.addAssets(album.id, assetIds)
+                albums.addAssets(album.id, selection)
                 pickingAlbumFor = null
             },
+            // Created empty and then filled, because an album can be created with a list of
+            // ids and a selection may be a query instead. One extra request, once.
             onCreate = { name ->
-                albums.create(name, assetIds)
+                albums.create(name) { album -> albums.addAssets(album.id, selection) }
                 pickingAlbumFor = null
             },
         )
@@ -438,7 +441,7 @@ private fun AlbumsPane(
     contentPadding: PaddingValues,
     accountId: String,
     onOpen: (com.imogen.sdk.Album) -> Unit,
-    onAddToAlbum: (List<String>) -> Unit,
+    onAddToAlbum: (AssetSelection) -> Unit,
     shortcuts: List<CollectionShortcut> = emptyList(),
 ) {
     if (!wide) {

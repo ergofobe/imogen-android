@@ -30,6 +30,7 @@ import com.imogen.android.ui.common.EmptyState
 import com.imogen.android.ui.timeline.AssetFeed
 import com.imogen.android.ui.timeline.PhotoBrowser
 import com.imogen.sdk.AssetQuery
+import com.imogen.sdk.AssetSelection
 import com.imogen.sdk.AssetType
 
 /**
@@ -44,7 +45,7 @@ import com.imogen.sdk.AssetType
 fun SearchScreen(
     session: Session,
     columns: Int,
-    onAddToAlbum: ((List<String>) -> Unit)?,
+    onAddToAlbum: ((AssetSelection) -> Unit)?,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
 ) {

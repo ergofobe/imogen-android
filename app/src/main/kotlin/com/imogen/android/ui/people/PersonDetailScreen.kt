@@ -9,6 +9,7 @@ import com.imogen.android.data.Session
 import com.imogen.android.ui.timeline.TimelineScreen
 import com.imogen.android.ui.timeline.TimelineViewModel
 import com.imogen.sdk.AssetFilter
+import com.imogen.sdk.AssetSelection
 
 /**
  * One person's photographs — an ordinary timeline with a filter on it.
@@ -29,7 +30,7 @@ fun PersonDetailScreen(
     columns: Int,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
-    onAddToAlbum: ((List<String>) -> Unit)? = null,
+    onAddToAlbum: ((AssetSelection) -> Unit)? = null,
 ) {
     val model: TimelineViewModel = viewModel(
         key = "person:${session.accountId}:$personId",

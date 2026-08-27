@@ -10,22 +10,29 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.activity.compose.BackHandler
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.imogen.android.data.Session
+import com.imogen.android.ui.common.ConfirmTrashDialog
 import com.imogen.android.ui.common.EmptyState
+import com.imogen.android.ui.common.Selection
 import com.imogen.android.ui.common.SelectionBar
 import com.imogen.android.ui.common.ErrorState
 import com.imogen.android.ui.common.Loading
+import com.imogen.android.ui.common.countMatching
+import com.imogen.android.ui.common.resolvedCount
 import com.imogen.android.ui.viewer.DetailsSheet
 import com.imogen.android.ui.viewer.Viewer
 import com.imogen.android.ui.viewer.ViewerMode
 import com.imogen.android.ui.viewer.asViewerItem
 import com.imogen.sdk.Asset
+import com.imogen.sdk.AssetSelection
 
 /**
  * A set of photographs, however they were chosen: the whole library, one album, one
@@ -46,18 +53,24 @@ fun PhotoBrowser(
     mode: ViewerMode = ViewerMode.Library,
     emptyHeadline: String = "Nothing here yet",
     emptyBody: String = "Photographs will appear here once there are some.",
-    onAddToAlbum: ((List<String>) -> Unit)? = null,
+    onAddToAlbum: ((AssetSelection) -> Unit)? = null,
     header: @Composable (() -> Unit)? = null,
 ) {
     val state by feed.state.collectAsStateWithLifecycle()
-    var selection by remember { mutableStateOf(emptySet<String>()) }
+    val scope = rememberCoroutineScope()
+    var selection by remember { mutableStateOf<Selection>(Selection.Ids()) }
+    /** How many photographs a "select all" holds, once the server has said. */
+    var matchedTotal by remember { mutableStateOf<Long?>(null) }
+    var confirmingTrash by remember { mutableStateOf<Long?>(null) }
     var openedAt by remember { mutableStateOf<Int?>(null) }
     var details by remember { mutableStateOf<Asset?>(null) }
     val gridState = rememberLazyGridState()
 
+    val selectedCount = selection.resolvedCount(matchedTotal)
+
     // Escaping a selection is the commonest thing somebody wants back out of, so it takes
     // the back gesture before the navigation does.
-    BackHandler(enabled = selection.isNotEmpty()) { selection = emptySet() }
+    BackHandler(enabled = !selection.isEmpty) { selection = Selection.Ids() }
 
     Box(modifier.fillMaxSize()) {
         when {
@@ -79,44 +92,75 @@ fun PhotoBrowser(
                     state = gridState,
                     contentPadding = contentPadding,
                     onOpen = { openedAt = it },
-                    onToggleSelection = { asset ->
-                        selection = if (asset.id in selection) selection - asset.id
-                        else selection + asset.id
-                    },
+                    onToggleSelection = { asset -> selection = selection.toggled(asset.id) },
                     onNearEnd = feed::loadMore,
                 )
             }
         }
 
         AnimatedVisibility(
-            visible = selection.isNotEmpty(),
+            visible = !selection.isEmpty,
             modifier = Modifier.align(Alignment.BottomCenter),
         ) {
             SelectionBar(
-                count = selection.size,
+                count = selectedCount,
                 trash = mode == ViewerMode.Trash,
-                onClear = { selection = emptySet() },
-                onFavourite = {
-                    state.items.filter { it.id in selection }
-                        .forEach { feed.setFavorite(it, true) }
-                    selection = emptySet()
+                onClear = { selection = Selection.Ids() },
+                // One PATCH per photograph, so this is offered for a list and withheld for
+                // a query rather than quietly favouriting the page that happens to be here.
+                onFavourite = (selection as? Selection.Ids)?.let { ids ->
+                    {
+                        state.items.filter { it.id in ids.ids }
+                            .forEach { feed.setFavorite(it, true) }
+                        selection = Selection.Ids()
+                    }
                 },
                 onTrash = {
-                    feed.trash(selection.toList())
-                    selection = emptySet()
+                    when (val current = selection) {
+                        is Selection.Ids -> {
+                            feed.trash(current.asAssetSelection())
+                            selection = Selection.Ids()
+                        }
+                        // Never without a number, and never a number this screen guessed.
+                        is Selection.Matching -> selectedCount?.let { confirmingTrash = it }
+                    }
                 },
+                // Putting photographs back is not destructive, so it needs no confirming.
                 onRestore = {
-                    feed.restore(selection.toList())
-                    selection = emptySet()
+                    feed.restore(selection.asAssetSelection())
+                    selection = Selection.Ids()
                 },
                 onAddToAlbum = onAddToAlbum?.let {
                     {
-                        it(selection.toList())
-                        selection = emptySet()
+                        it(selection.asAssetSelection())
+                        selection = Selection.Ids()
+                    }
+                },
+                onSelectAll = {
+                    selection = Selection.Matching(feed.filter)
+                    matchedTotal = null
+                    scope.launch {
+                        runCatching { countMatching(session, feed.filter) }
+                            .onSuccess { matchedTotal = it }
+                            // Without a count there is nothing honest to offer, so the
+                            // selection goes back to being the ones actually ticked.
+                            .onFailure { selection = Selection.Ids() }
                     }
                 },
             )
         }
+    }
+
+    confirmingTrash?.let { count ->
+        ConfirmTrashDialog(
+            count = count,
+            onDismiss = { confirmingTrash = null },
+            onConfirm = {
+                feed.trash(selection.asAssetSelection())
+                selection = Selection.Ids()
+                confirmingTrash = null
+            },
+        )
     }
 
     openedAt?.let { index ->
@@ -135,8 +179,8 @@ fun PhotoBrowser(
             onClose = { openedAt = null },
             onFavorite = feed::setFavorite,
             onArchive = feed::setArchived,
-            onTrash = { feed.trash(listOf(it.id)) },
-            onRestore = { feed.restore(listOf(it.id)) },
+            onTrash = { feed.trash(AssetSelection(assetIds = listOf(it.id))) },
+            onRestore = { feed.restore(AssetSelection(assetIds = listOf(it.id))) },
             onDetails = { details = it },
         )
     }

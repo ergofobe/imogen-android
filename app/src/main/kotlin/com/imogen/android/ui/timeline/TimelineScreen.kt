@@ -48,15 +48,20 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.imogen.android.data.Session
 import com.imogen.android.ui.common.AssetImage
+import com.imogen.android.ui.common.ConfirmTrashDialog
 import com.imogen.android.ui.common.EmptyState
 import com.imogen.android.ui.common.ErrorState
 import com.imogen.android.ui.common.Loading
+import com.imogen.android.ui.common.Selection
 import com.imogen.android.ui.common.SelectionBar
+import com.imogen.android.ui.common.countMatching
+import com.imogen.android.ui.common.resolvedCount
 import com.imogen.android.ui.viewer.DetailsSheet
 import com.imogen.android.ui.viewer.Viewer
 import com.imogen.android.ui.viewer.ViewerMode
 import com.imogen.android.ui.viewer.asViewerItem
 import com.imogen.sdk.Asset
+import com.imogen.sdk.AssetSelection
 import com.imogen.sdk.AssetType
 import com.imogen.sdk.TimelineTile
 import kotlinx.coroutines.Job
@@ -85,13 +90,16 @@ fun TimelineScreen(
     emptyHeadline: String = "Your library is empty",
     emptyBody: String = "Turn on backup, or add photographs from another device — they " +
         "will appear here, newest first.",
-    onAddToAlbum: ((List<String>) -> Unit)? = null,
+    onAddToAlbum: ((AssetSelection) -> Unit)? = null,
 ) {
     val state by model.state.collectAsStateWithLifecycle()
     val grid = rememberLazyGridState()
     val scope = rememberCoroutineScope()
 
-    var selection by remember { mutableStateOf(emptySet<String>()) }
+    var selection by remember { mutableStateOf<Selection>(Selection.Ids()) }
+    /** How many photographs a "select all" holds, once the server has said. */
+    var matchedTotal by remember { mutableStateOf<Long?>(null) }
+    var confirmingTrash by remember { mutableStateOf<Long?>(null) }
     var opened by remember { mutableStateOf<TimelineTile?>(null) }
     var details by remember { mutableStateOf<Asset?>(null) }
     var scrubbing by remember { mutableStateOf(false) }
@@ -99,7 +107,9 @@ fun TimelineScreen(
     /** The day at the top of the viewport, which is what the thumb draws itself against. */
     var topDay by remember { mutableIntStateOf(0) }
 
-    BackHandler(enabled = selection.isNotEmpty()) { selection = emptySet() }
+    val selectedCount = selection.resolvedCount(matchedTotal)
+
+    BackHandler(enabled = !selection.isEmpty) { selection = Selection.Ids() }
 
     if (state.loading) {
         Loading(modifier)
@@ -209,13 +219,13 @@ fun TimelineScreen(
                         PhotoTile(
                             session = session,
                             tile = tile,
-                            selected = tile.id in selection,
-                            selecting = selection.isNotEmpty(),
+                            selected = selection.holds(tile.id),
+                            selecting = !selection.isEmpty,
                             onClick = {
-                                if (selection.isNotEmpty()) {
-                                    selection = selection.toggled(tile.id)
-                                } else {
+                                if (selection.isEmpty) {
                                     opened = tile
+                                } else {
+                                    selection = selection.toggled(tile.id)
                                 }
                             },
                             onLongClick = { selection = selection.toggled(tile.id) },
@@ -245,28 +255,62 @@ fun TimelineScreen(
         )
 
         AnimatedVisibility(
-            visible = selection.isNotEmpty(),
+            visible = !selection.isEmpty,
             modifier = Modifier.align(Alignment.BottomCenter),
         ) {
             SelectionBar(
-                count = selection.size,
-                onClear = { selection = emptySet() },
-                onFavourite = {
-                    selection.forEach { model.setFavorite(it, true) }
-                    selection = emptySet()
+                count = selectedCount,
+                onClear = { selection = Selection.Ids() },
+                // There is no bulk favourite in the API — it is one PATCH per photograph —
+                // so this is offered for a list and withheld for a query rather than
+                // quietly doing it to the few hundred that happen to be loaded.
+                onFavourite = (selection as? Selection.Ids)?.let { ids ->
+                    {
+                        ids.ids.forEach { model.setFavorite(it, true) }
+                        selection = Selection.Ids()
+                    }
                 },
                 onTrash = {
-                    model.trash(selection.toList())
-                    selection = emptySet()
+                    when (val current = selection) {
+                        is Selection.Ids -> {
+                            model.trash(current.asAssetSelection())
+                            selection = Selection.Ids()
+                        }
+                        // Never without a number, and never a number this screen guessed.
+                        is Selection.Matching -> selectedCount?.let { confirmingTrash = it }
+                    }
                 },
                 onAddToAlbum = onAddToAlbum?.let {
                     {
-                        it(selection.toList())
-                        selection = emptySet()
+                        it(selection.asAssetSelection())
+                        selection = Selection.Ids()
+                    }
+                },
+                onSelectAll = {
+                    selection = Selection.Matching(model.filter)
+                    matchedTotal = null
+                    scope.launch {
+                        runCatching { countMatching(session, model.filter) }
+                            .onSuccess { matchedTotal = it }
+                            // Without a count there is nothing honest to offer, so the
+                            // selection goes back to being the ones actually ticked.
+                            .onFailure { selection = Selection.Ids() }
                     }
                 },
             )
         }
+    }
+
+    confirmingTrash?.let { count ->
+        ConfirmTrashDialog(
+            count = count,
+            onDismiss = { confirmingTrash = null },
+            onConfirm = {
+                model.trash(selection.asAssetSelection())
+                selection = Selection.Ids()
+                confirmingTrash = null
+            },
+        )
     }
 
     opened?.let { tile ->
@@ -304,7 +348,7 @@ fun TimelineScreen(
                 model.setArchived(asset.id, archived)
                 current = asset.copy(archived = archived)
             },
-            onTrash = { model.trash(listOf(it.id)) },
+            onTrash = { model.trash(AssetSelection(assetIds = listOf(it.id))) },
             onRestore = {},
             onDetails = { details = it },
         )
@@ -321,9 +365,6 @@ fun TimelineScreen(
         )
     }
 }
-
-private fun Set<String>.toggled(id: String): Set<String> =
-    if (id in this) this - id else this + id
 
 @Composable
 private fun DayHeading(date: String, count: Long) {
