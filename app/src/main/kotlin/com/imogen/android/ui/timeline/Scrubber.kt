@@ -4,7 +4,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -14,7 +13,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DragHandle
@@ -31,7 +30,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -40,7 +38,6 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -157,85 +154,85 @@ fun Scrubber(
         )
         if (railAlpha > 0f) {
             marks.forEach { mark ->
-                Row(
-                    Modifier
+                // Against the edge of the screen, with nothing after them. A tick was
+                // pointing at the rail the year is already on, and the thumb passing over
+                // a year now and then costs less than a column of punctuation.
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                    modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .padding(end = 40.dp)
-                        .offset(y = trackDp * mark.fraction + thumbHeight / 2 - 8.dp)
-                        .height(16.dp)
+                        .padding(end = 8.dp)
+                        .offset(y = trackDp * mark.fraction + thumbHeight / 2 - 10.dp)
                         .graphicsLayer { alpha = railAlpha },
-                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Surface(
-                        shape = RoundedCornerShape(50),
-                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-                        modifier = Modifier.padding(end = 5.dp),
-                    ) {
-                        Text(
-                            mark.year.toString(),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                        )
-                    }
-                    Box(
-                        Modifier
-                            .size(width = 10.dp, height = 2.dp)
-                            .clip(CircleShape)
-                            .background(
-                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.9f),
-                            ),
+                    Text(
+                        mark.year.toString(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
                     )
                 }
             }
         }
 
-        Row(
-            Modifier
+        // The month under the thumb, drawn on its own rather than beside it: measured
+        // against the rail's width it broke "December 2024" across two lines, and measured
+        // unbounded inside a row it pushed the thumb off the screen. So it hangs to the
+        // left, from the same offset, and the rail stays narrow enough not to swallow taps
+        // meant for the photographs.
+        AnimatedVisibility(
+            visible = dragging,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
                 .align(Alignment.TopEnd)
-                .offset(y = trackDp * position)
-                .padding(end = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .offset(y = trackDp * position + 4.dp)
+                .padding(end = 46.dp)
+                .wrapContentWidth(align = Alignment.End, unbounded = true),
         ) {
-            AnimatedVisibility(visible = dragging, enter = fadeIn(), exit = fadeOut()) {
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = MaterialTheme.colorScheme.primary,
-                    tonalElevation = 6.dp,
-                    modifier = Modifier.padding(end = 8.dp),
-                ) {
-                    Text(
-                        monthLabel(layout.index.buckets[dragDay].date),
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-                    )
-                }
-            }
-
             Surface(
                 shape = RoundedCornerShape(50),
-                tonalElevation = if (dragging) 8.dp else 3.dp,
-                color = if (dragging) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.surfaceVariant
-                },
-                modifier = Modifier.size(width = 32.dp, height = thumbHeight - 8.dp),
+                color = MaterialTheme.colorScheme.primary,
+                tonalElevation = 6.dp,
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        Icons.Filled.DragHandle,
-                        contentDescription = null,
-                        tint = if (dragging) {
-                            MaterialTheme.colorScheme.onPrimary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
+                Text(
+                    monthLabel(layout.index.buckets[dragDay].date),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                )
+            }
+        }
+
+        Surface(
+            shape = RoundedCornerShape(50),
+            tonalElevation = if (dragging) 8.dp else 3.dp,
+            color = if (dragging) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant
+            },
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .offset(y = trackDp * position)
+                .padding(end = 6.dp)
+                .size(width = 32.dp, height = thumbHeight - 8.dp),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    Icons.Filled.DragHandle,
+                    contentDescription = null,
+                    tint = if (dragging) {
+                        MaterialTheme.colorScheme.onPrimary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.size(18.dp),
+                )
             }
         }
     }
