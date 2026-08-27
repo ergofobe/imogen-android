@@ -44,9 +44,15 @@ class AlbumsViewModel(private val session: Session) : ViewModel() {
         }
     }
 
-    fun create(name: String, then: (Album) -> Unit = {}) {
+    /**
+     * A list of ids goes in the creation itself, so "new album with these forty" is one
+     * request that either happens or does not. A by-query selection cannot — [AlbumCreate]
+     * takes ids and nothing else — so that one creates and then fills, and [then] is where
+     * the filling goes.
+     */
+    fun create(name: String, assetIds: List<String>? = null, then: (Album) -> Unit = {}) {
         viewModelScope.launch {
-            runCatching { session.client.albums.create(AlbumCreate(name = name)) }
+            runCatching { session.client.albums.create(AlbumCreate(name = name, assetIds = assetIds)) }
                 .onSuccess { album ->
                     _state.update { it.copy(albums = it.albums + album) }
                     then(album)

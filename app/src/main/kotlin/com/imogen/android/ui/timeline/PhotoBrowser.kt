@@ -6,13 +6,14 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -33,6 +34,7 @@ import com.imogen.android.ui.viewer.ViewerMode
 import com.imogen.android.ui.viewer.asViewerItem
 import com.imogen.sdk.Asset
 import com.imogen.sdk.AssetSelection
+import kotlinx.coroutines.launch
 
 /**
  * A set of photographs, however they were chosen: the whole library, one album, one
@@ -48,6 +50,7 @@ fun PhotoBrowser(
     session: Session,
     feed: AssetFeed,
     columns: Int,
+    snackbar: SnackbarHostState,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
     mode: ViewerMode = ViewerMode.Library,
@@ -67,10 +70,18 @@ fun PhotoBrowser(
     val gridState = rememberLazyGridState()
 
     val selectedCount = selection.resolvedCount(matchedTotal)
+    // A by-query selection with everything unticked is empty in every sense that matters.
+    val selecting = !selection.isEmpty && selectedCount != 0L
+
+    LaunchedEffect(state.notice) {
+        val notice = state.notice ?: return@LaunchedEffect
+        snackbar.showSnackbar(notice)
+        feed.clearNotice()
+    }
 
     // Escaping a selection is the commonest thing somebody wants back out of, so it takes
     // the back gesture before the navigation does.
-    BackHandler(enabled = !selection.isEmpty) { selection = Selection.Ids() }
+    BackHandler(enabled = selecting) { selection = Selection.Ids() }
 
     Box(modifier.fillMaxSize()) {
         when {
@@ -99,7 +110,7 @@ fun PhotoBrowser(
         }
 
         AnimatedVisibility(
-            visible = !selection.isEmpty,
+            visible = selecting,
             modifier = Modifier.align(Alignment.BottomCenter),
         ) {
             SelectionBar(
@@ -137,14 +148,16 @@ fun PhotoBrowser(
                     }
                 },
                 onSelectAll = {
-                    selection = Selection.Matching(feed.filter)
+                    val all = Selection.Matching(feed.filter)
+                    selection = all
                     matchedTotal = null
                     scope.launch {
                         runCatching { countMatching(session, feed.filter) }
                             .onSuccess { matchedTotal = it }
                             // Without a count there is nothing honest to offer, so the
-                            // selection goes back to being the ones actually ticked.
-                            .onFailure { selection = Selection.Ids() }
+                            // selection goes back to being the ones actually ticked —
+                            // unless somebody has moved on and ticked some since.
+                            .onFailure { if (selection === all) selection = Selection.Ids() }
                     }
                 },
             )
@@ -165,7 +178,7 @@ fun PhotoBrowser(
 
     openedAt?.let { index ->
         val items = remember(state.items) { state.items.map { it.asViewerItem() } }
-        var currentId by remember { mutableStateOf(state.items.getOrNull(index)?.id) }
+        var currentId by remember(index) { mutableStateOf(state.items.getOrNull(index)?.id) }
 
         Viewer(
             session = session,

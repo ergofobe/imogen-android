@@ -1,6 +1,7 @@
 package com.imogen.android.ui.people
 
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -28,6 +29,7 @@ fun PersonDetailScreen(
     session: Session,
     personId: String,
     columns: Int,
+    snackbar: SnackbarHostState,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
     onAddToAlbum: ((AssetSelection) -> Unit)? = null,
@@ -41,6 +43,7 @@ fun PersonDetailScreen(
         session = session,
         model = model,
         columns = columns,
+        snackbar = snackbar,
         modifier = modifier,
         contentPadding = contentPadding,
         emptyHeadline = "No photographs",

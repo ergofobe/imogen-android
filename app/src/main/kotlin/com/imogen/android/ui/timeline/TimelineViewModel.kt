@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.imogen.android.data.Session
+import com.imogen.android.ui.common.trashedMessage
 import com.imogen.sdk.AssetFilter
 import com.imogen.sdk.AssetSelection
 import com.imogen.sdk.AssetUpdate
@@ -25,6 +26,14 @@ data class TimelineState(
     val days: Map<String, List<TimelineTile>> = emptyMap(),
     val loading: Boolean = true,
     val error: String? = null,
+    /**
+     * Something to say about an edit that has already happened, or failed to.
+     *
+     * A bulk action confirmed against a count deserves an answer either way: the grid
+     * putting the photographs back is honest, but on its own it does not say whether the
+     * server refused or simply had nothing to do.
+     */
+    val notice: String? = null,
 )
 
 /**
@@ -177,10 +186,20 @@ class TimelineViewModel(
 
         viewModelScope.launch {
             runCatching { session.client.assets.trash(selection) }
-                .onSuccess { if (assetIds == null) refresh() }
-                .onFailure { refresh() }
+                .onSuccess { count ->
+                    if (assetIds == null) {
+                        refresh()
+                        _state.update { it.copy(notice = trashedMessage(count)) }
+                    }
+                }
+                .onFailure { error ->
+                    refresh()
+                    _state.update { it.copy(notice = describe(error)) }
+                }
         }
     }
+
+    fun clearNotice() = _state.update { it.copy(notice = null) }
 
     private fun replaceLocally(assetId: String, change: (TimelineTile) -> TimelineTile) {
         _state.update { state ->

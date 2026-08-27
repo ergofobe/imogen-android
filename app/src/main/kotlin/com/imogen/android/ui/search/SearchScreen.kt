@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -45,6 +46,7 @@ import com.imogen.sdk.AssetType
 fun SearchScreen(
     session: Session,
     columns: Int,
+    snackbar: SnackbarHostState,
     onAddToAlbum: ((AssetSelection) -> Unit)?,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
@@ -125,6 +127,7 @@ fun SearchScreen(
                 factory = AssetFeed.factory(session, query),
             )
             PhotoBrowser(
+                snackbar = snackbar,
                 session = session,
                 feed = feed,
                 columns = columns,

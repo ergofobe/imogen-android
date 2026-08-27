@@ -59,11 +59,16 @@ data class ViewerItem(
     val id: String,
     val type: AssetType,
     val placeholderColor: String? = null,
+    /**
+     * Drawn from here rather than from the fetched asset, so there is one optimistic copy
+     * of it. Whoever owns this list is also who puts it back when the server refuses.
+     */
+    val favorite: Boolean = false,
 )
 
-fun Asset.asViewerItem(): ViewerItem = ViewerItem(id, type, placeholderColor)
+fun Asset.asViewerItem(): ViewerItem = ViewerItem(id, type, placeholderColor, favorite)
 
-fun TimelineTile.asViewerItem(): ViewerItem = ViewerItem(id, type, placeholderColor)
+fun TimelineTile.asViewerItem(): ViewerItem = ViewerItem(id, type, placeholderColor, favorite)
 
 /**
  * One photograph, full screen, with the rest of them a swipe away.
@@ -103,11 +108,8 @@ fun Viewer(
     )
     var chromeVisible by remember { mutableStateOf(true) }
 
-    // Every photograph deleted from underneath the pager shortens the list. Closing when
-    // it empties is the only sensible end to that.
-    LaunchedEffect(items.size) { if (items.isEmpty()) onClose() }
-
-    val currentId = items.getOrNull(pager.currentPage)?.id
+    val currentItem = items.getOrNull(pager.currentPage)
+    val currentId = currentItem?.id
     LaunchedEffect(currentId) { currentId?.let(onPage) }
 
     BackHandler(onBack = onClose)
@@ -130,6 +132,10 @@ fun Viewer(
                 ZoomablePage(
                     session = session,
                     item = item,
+                    // The filename once it is known, which for the page in front is
+                    // almost always; a tile has none to offer until it is fetched.
+                    contentDescription = current?.takeIf { it.id == item.id }
+                        ?.originalFilename ?: "Photograph",
                     onTap = { chromeVisible = !chromeVisible },
                 )
             }
@@ -137,7 +143,7 @@ fun Viewer(
 
         // Only while it is the asset for the page actually on screen. A swipe outruns the
         // fetch, and a filename left over from the previous photograph is worse than none.
-        val current = current?.takeIf { it.id == currentId }
+        val loaded = current?.takeIf { it.id == currentId }
 
         AnimatedVisibility(
             visible = chromeVisible,
@@ -157,20 +163,24 @@ fun Viewer(
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, "Close", tint = Color.White)
                 }
                 Text(
-                    text = current?.originalFilename.orEmpty(),
+                    text = loaded?.originalFilename.orEmpty(),
                     color = Color.White,
                     maxLines = 1,
                     modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
                 )
-                if (current != null) {
-                    IconButton(onClick = { onDetails(current) }) {
-                        Icon(Icons.Filled.Info, "Details", tint = Color.White)
-                    }
+                IconButton(
+                    onClick = { loaded?.let(onDetails) },
+                    enabled = loaded != null,
+                ) {
+                    Icon(Icons.Filled.Info, "Details", tint = Color.White)
                 }
             }
         }
 
-        if (current != null) {
+        // The row stays put while the photograph's details are on their way. Removing it
+        // and putting it back makes the controls jump on every swipe, and a control that
+        // is absent for half a second is one somebody presses at the wrong moment.
+        if (currentItem != null) {
             AnimatedVisibility(
                 visible = chromeVisible,
                 enter = fadeIn(),
@@ -186,27 +196,41 @@ fun Viewer(
                     horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceEvenly,
                 ) {
                     if (mode == ViewerMode.Trash) {
-                        IconButton(onClick = { onRestore(current) }) {
+                        IconButton(
+                            onClick = { loaded?.let(onRestore) },
+                            enabled = loaded != null,
+                        ) {
                             Icon(Icons.Filled.Restore, "Put back", tint = Color.White)
                         }
                     } else {
-                        IconButton(onClick = { onFavorite(current, !current.favorite) }) {
+                        // The heart reads from the item, which its owner keeps honest, so
+                        // it colours in at once rather than waiting for a round trip.
+                        IconButton(
+                            onClick = { loaded?.let { onFavorite(it, !currentItem.favorite) } },
+                            enabled = loaded != null,
+                        ) {
                             Icon(
-                                if (current.favorite) Icons.Filled.Favorite
+                                if (currentItem.favorite) Icons.Filled.Favorite
                                 else Icons.Filled.FavoriteBorder,
                                 "Favourite",
                                 tint = Color.White,
                             )
                         }
-                        IconButton(onClick = { onArchive(current, !current.archived) }) {
+                        IconButton(
+                            onClick = { loaded?.let { onArchive(it, !it.archived) } },
+                            enabled = loaded != null,
+                        ) {
                             Icon(
-                                if (current.archived) Icons.Filled.Unarchive
+                                if (loaded?.archived == true) Icons.Filled.Unarchive
                                 else Icons.Filled.Archive,
                                 "Archive",
                                 tint = Color.White,
                             )
                         }
-                        IconButton(onClick = { onTrash(current) }) {
+                        IconButton(
+                            onClick = { loaded?.let(onTrash) },
+                            enabled = loaded != null,
+                        ) {
                             Icon(Icons.Filled.Delete, "Move to trash", tint = Color.White)
                         }
                     }
@@ -225,7 +249,12 @@ enum class ViewerMode { Library, Trash }
  * there, which is the failure mode of every zoom implementation that forgets to.
  */
 @Composable
-private fun ZoomablePage(session: Session, item: ViewerItem, onTap: () -> Unit) {
+private fun ZoomablePage(
+    session: Session,
+    item: ViewerItem,
+    contentDescription: String,
+    onTap: () -> Unit,
+) {
     var scale by remember(item.id) { mutableFloatStateOf(1f) }
     var offsetX by remember(item.id) { mutableFloatStateOf(0f) }
     var offsetY by remember(item.id) { mutableFloatStateOf(0f) }
@@ -269,6 +298,7 @@ private fun ZoomablePage(session: Session, item: ViewerItem, onTap: () -> Unit) 
             placeholderColor = item.placeholderColor,
             variant = "preview",
             contentScale = ContentScale.Fit,
+            contentDescription = contentDescription,
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer(

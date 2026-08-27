@@ -38,8 +38,10 @@ sealed interface Selection {
     /**
      * Everything [filter] matches, apart from [except].
      *
-     * The SDK caps `except` at ten thousand, which is the right place to stop: past that,
-     * unticking is not what somebody is doing any more.
+     * The server caps `except` at ten thousand — `validate()` does not check it, so past
+     * that the refusal arrives as a 400 rather than as an exception here. It is not a cap
+     * this reaches in practice: unticking ten thousand photographs one at a time is not
+     * what anybody is doing.
      */
     data class Matching(
         val filter: AssetFilter,
@@ -93,3 +95,22 @@ fun AssetQuery.toFilter(): AssetFilter = AssetFilter(
  */
 suspend fun countMatching(session: Session, filter: AssetFilter): Long =
     session.client.assets.timeline(TimelineQuery(filter)).buckets.sumOf { it.count }
+
+/**
+ * What actually happened, for a bulk action somebody agreed to a number for.
+ *
+ * The server's own count rather than the one in the dialog: a library moves underneath a
+ * confirmation, and reporting back the figure we asked with would only ever confirm our
+ * own arithmetic.
+ */
+fun trashedMessage(count: Long): String = when (count) {
+    0L -> "Nothing to move"
+    1L -> "1 photo moved to the trash"
+    else -> "%,d photos moved to the trash".format(count)
+}
+
+fun restoredMessage(count: Long): String = when (count) {
+    0L -> "Nothing to put back"
+    1L -> "1 photo put back"
+    else -> "%,d photos put back".format(count)
+}

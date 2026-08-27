@@ -25,12 +25,14 @@ import androidx.compose.material.icons.filled.PlayCircleFilled
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -85,6 +87,7 @@ fun TimelineScreen(
     session: Session,
     model: TimelineViewModel,
     columns: Int,
+    snackbar: SnackbarHostState,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
     emptyHeadline: String = "Your library is empty",
@@ -100,7 +103,16 @@ fun TimelineScreen(
     /** How many photographs a "select all" holds, once the server has said. */
     var matchedTotal by remember { mutableStateOf<Long?>(null) }
     var confirmingTrash by remember { mutableStateOf<Long?>(null) }
-    var opened by remember { mutableStateOf<TimelineTile?>(null) }
+    /** The day a photograph was opened from, and the photograph. */
+    var opened by remember { mutableStateOf<Pair<String, TimelineTile>?>(null) }
+    /**
+     * Whole assets fetched for the viewer, by id.
+     *
+     * A tile carries no exif, no filename and no size, so the photograph in front of
+     * somebody is fetched entire — and kept, so paging back and forth through an afternoon
+     * asks for each one once rather than once per visit. Emptied when the viewer closes.
+     */
+    val fetched = remember { mutableStateMapOf<String, Asset>() }
     var details by remember { mutableStateOf<Asset?>(null) }
     var scrubbing by remember { mutableStateOf(false) }
     var settle by remember { mutableStateOf<Job?>(null) }
@@ -108,8 +120,17 @@ fun TimelineScreen(
     var topDay by remember { mutableIntStateOf(0) }
 
     val selectedCount = selection.resolvedCount(matchedTotal)
+    // A by-query selection with everything unticked is empty in every sense that matters,
+    // and offering to trash nought photographs is not an offer.
+    val selecting = !selection.isEmpty && selectedCount != 0L
 
-    BackHandler(enabled = !selection.isEmpty) { selection = Selection.Ids() }
+    LaunchedEffect(state.notice) {
+        val notice = state.notice ?: return@LaunchedEffect
+        snackbar.showSnackbar(notice)
+        model.clearNotice()
+    }
+
+    BackHandler(enabled = selecting) { selection = Selection.Ids() }
 
     if (state.loading) {
         Loading(modifier)
@@ -220,12 +241,14 @@ fun TimelineScreen(
                             session = session,
                             tile = tile,
                             selected = selection.holds(tile.id),
-                            selecting = !selection.isEmpty,
+                            selecting = selecting,
                             onClick = {
-                                if (selection.isEmpty) {
-                                    opened = tile
-                                } else {
+                                if (selecting) {
                                     selection = selection.toggled(tile.id)
+                                } else {
+                                    // The bucket the server filed it under, carried rather
+                                    // than re-derived: the viewer pages through this day.
+                                    opened = date to tile
                                 }
                             },
                             onLongClick = { selection = selection.toggled(tile.id) },
@@ -255,7 +278,7 @@ fun TimelineScreen(
         )
 
         AnimatedVisibility(
-            visible = !selection.isEmpty,
+            visible = selecting,
             modifier = Modifier.align(Alignment.BottomCenter),
         ) {
             SelectionBar(
@@ -287,14 +310,16 @@ fun TimelineScreen(
                     }
                 },
                 onSelectAll = {
-                    selection = Selection.Matching(model.filter)
+                    val all = Selection.Matching(model.filter)
+                    selection = all
                     matchedTotal = null
                     scope.launch {
                         runCatching { countMatching(session, model.filter) }
                             .onSuccess { matchedTotal = it }
                             // Without a count there is nothing honest to offer, so the
-                            // selection goes back to being the ones actually ticked.
-                            .onFailure { selection = Selection.Ids() }
+                            // selection goes back to being the ones actually ticked —
+                            // unless somebody has moved on and ticked some since.
+                            .onFailure { if (selection === all) selection = Selection.Ids() }
                     }
                 },
             )
@@ -313,21 +338,21 @@ fun TimelineScreen(
         )
     }
 
-    opened?.let { tile ->
+    opened?.let { (date, tile) ->
         // The viewer pages through the day it was opened from. Handing it fifty thousand
         // photographs is not possible — most of them are not loaded — and a day is the
         // unit somebody is looking through anyway.
-        val day = remember(state.days, tile.capturedAt) {
-            state.days[tile.capturedAt.take(10)].orEmpty().map { it.asViewerItem() }
+        val day = remember(state.days, date) {
+            state.days[date].orEmpty().map { it.asViewerItem() }
         }
 
-        // A tile has no exif, no filename and no size, so the photograph in front of
-        // somebody is fetched whole. One request per photograph opened, rather than a
-        // whole day of them fetched on the chance that one is.
-        var currentId by remember { mutableStateOf(tile.id) }
-        var current by remember { mutableStateOf<Asset?>(null) }
+        var currentId by remember(tile.id) { mutableStateOf(tile.id) }
+        val current = fetched[currentId]
         LaunchedEffect(currentId) {
-            current = runCatching { session.client.assets.get(currentId) }.getOrNull()
+            if (currentId !in fetched) {
+                runCatching { session.client.assets.get(currentId) }
+                    .onSuccess { fetched[currentId] = it }
+            }
         }
 
         Viewer(
@@ -337,16 +362,17 @@ fun TimelineScreen(
             current = current,
             mode = ViewerMode.Library,
             onPage = { currentId = it },
-            onClose = { opened = null },
-            // The fetched asset is what the chrome draws its icons from, so it moves with
-            // the tile rather than waiting for the next photograph to be opened.
-            onFavorite = { asset, favorite ->
-                model.setFavorite(asset.id, favorite)
-                current = asset.copy(favorite = favorite)
+            onClose = {
+                opened = null
+                fetched.clear()
             },
+            // The heart is drawn from the tile, which is what the view model puts back if
+            // the server refuses — so there is one optimistic copy of this, not two that
+            // can disagree.
+            onFavorite = { asset, favorite -> model.setFavorite(asset.id, favorite) },
             onArchive = { asset, archived ->
                 model.setArchived(asset.id, archived)
-                current = asset.copy(archived = archived)
+                fetched[asset.id] = asset.copy(archived = archived)
             },
             onTrash = { model.trash(AssetSelection(assetIds = listOf(it.id))) },
             onRestore = {},
@@ -358,8 +384,11 @@ fun TimelineScreen(
         DetailsSheet(
             asset = asset,
             onDismiss = { details = null },
-            onDescriptionChanged = {
-                model.setDescription(asset.id, it)
+            onDescriptionChanged = { description ->
+                model.setDescription(asset.id, description)
+                // So reopening the sheet shows what was just typed rather than what the
+                // server said before it was.
+                fetched[asset.id] = asset.copy(description = description)
                 details = null
             },
         )
@@ -412,7 +441,16 @@ private fun PhotoTile(
             .clip(RoundedCornerShape(2.dp))
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
     ) {
-        AssetImage(session, tile.id, tile.placeholderColor, "thumbnail", Modifier.fillMaxSize())
+        // A tile carries no filename to read out, so the cell says what it is and the play
+        // badge below says whether it moves.
+        AssetImage(
+            session = session,
+            assetId = tile.id,
+            placeholderColor = tile.placeholderColor,
+            variant = "thumbnail",
+            modifier = Modifier.fillMaxSize(),
+            contentDescription = "Photograph",
+        )
 
         if (tile.type == AssetType.VIDEO) {
             Icon(

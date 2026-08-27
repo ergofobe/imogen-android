@@ -5,7 +5,9 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.imogen.android.data.Session
+import com.imogen.android.ui.common.restoredMessage
 import com.imogen.android.ui.common.toFilter
+import com.imogen.android.ui.common.trashedMessage
 import com.imogen.sdk.Asset
 import com.imogen.sdk.AssetFilter
 import com.imogen.sdk.AssetQuery
@@ -24,6 +26,8 @@ data class FeedState(
     val appending: Boolean = false,
     val exhausted: Boolean = false,
     val error: String? = null,
+    /** Something to say about a bulk action that has already happened, or failed to. */
+    val notice: String? = null,
 )
 
 /**
@@ -109,17 +113,25 @@ class AssetFeed(
 
     /** Moves photographs to the trash, where they wait rather than being destroyed. */
     fun trash(selection: AssetSelection) =
-        mutate(selection) { session.client.assets.trash(it) }
+        mutate(selection, ::trashedMessage) { session.client.assets.trash(it) }
 
     fun restore(selection: AssetSelection) =
-        mutate(selection) { session.client.assets.restore(it) }
+        mutate(selection, ::restoredMessage) { session.client.assets.restore(it) }
 
     /**
      * A list of ids leaves the feed at once and comes back if the server refuses. A query
      * cannot be applied here — what it matches is mostly unfetched — so the feed is simply
      * loaded again once the server has acted.
+     *
+     * Either way the outcome is said out loud when the action was a query: somebody who
+     * agreed to a number is owed the number that actually happened, and a refusal that
+     * leaves the screen unchanged is indistinguishable from one that did nothing.
      */
-    private fun mutate(selection: AssetSelection, act: suspend (AssetSelection) -> Long) {
+    private fun mutate(
+        selection: AssetSelection,
+        describeResult: (Long) -> String,
+        act: suspend (AssetSelection) -> Long,
+    ) {
         val ids = selection.assetIds?.toSet()
         if (ids != null && ids.isEmpty()) return
 
@@ -130,10 +142,20 @@ class AssetFeed(
 
         viewModelScope.launch {
             runCatching { act(selection) }
-                .onSuccess { if (ids == null) refresh() }
-                .onFailure { putBack(removed) }
+                .onSuccess { count ->
+                    if (ids == null) {
+                        refresh()
+                        _state.update { it.copy(notice = describeResult(count)) }
+                    }
+                }
+                .onFailure { error ->
+                    putBack(removed)
+                    _state.update { it.copy(notice = describe(error)) }
+                }
         }
     }
+
+    fun clearNotice() = _state.update { it.copy(notice = null) }
 
     private fun edit(asset: Asset, patch: AssetUpdate, optimistic: (Asset) -> Asset) {
         val before = asset

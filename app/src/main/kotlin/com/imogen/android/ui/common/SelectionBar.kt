@@ -73,7 +73,11 @@ fun SelectionBar(
                 onFavourite?.let {
                     IconButton(onClick = it) { Icon(Icons.Filled.Favorite, "Favourite") }
                 }
-                IconButton(onClick = onTrash) { Icon(Icons.Filled.Delete, "Move to trash") }
+                // Nothing destructive while the number is still coming. A live button that
+                // does nothing teaches people to press it twice.
+                IconButton(onClick = onTrash, enabled = count != null) {
+                    Icon(Icons.Filled.Delete, "Move to trash")
+                }
             }
         }
     }

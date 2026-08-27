@@ -265,6 +265,7 @@ private fun Content(
                 session = session,
                 feed = feed,
                 columns = columns,
+                snackbar = snackbar,
                 contentPadding = contentPadding,
                 emptyHeadline = "This album is empty",
                 emptyBody = "Select photographs anywhere in the library and add them here.",
@@ -278,6 +279,7 @@ private fun Content(
                 session = session,
                 personId = overlay.id,
                 columns = columns,
+                snackbar = snackbar,
                 contentPadding = contentPadding,
                 onAddToAlbum = addToAlbum,
             )
@@ -315,6 +317,7 @@ private fun Content(
                 session = session,
                 model = timeline,
                 columns = columns,
+                snackbar = snackbar,
                 contentPadding = contentPadding,
                 onAddToAlbum = addToAlbum,
             )
@@ -323,6 +326,7 @@ private fun Content(
         Destination.Search -> SearchScreen(
             session = session,
             columns = columns,
+            snackbar = snackbar,
             onAddToAlbum = addToAlbum,
             contentPadding = contentPadding,
         )
@@ -333,6 +337,7 @@ private fun Content(
             columns = columns,
             wide = wide,
             contentPadding = contentPadding,
+            snackbar = snackbar,
             onOpen = { onOverlay(Overlay.AlbumDetail(it.id, it.name)) },
             onAddToAlbum = addToAlbum,
             accountId = account.id,
@@ -378,6 +383,7 @@ private fun Content(
                 session = session,
                 feed = feed,
                 columns = columns,
+                snackbar = snackbar,
                 contentPadding = contentPadding,
                 emptyHeadline = "No favourites yet",
                 emptyBody = "Tap the heart while looking at a photograph to keep it here.",
@@ -394,6 +400,7 @@ private fun Content(
                 session = session,
                 feed = feed,
                 columns = columns,
+                snackbar = snackbar,
                 contentPadding = contentPadding,
                 mode = ViewerMode.Trash,
                 emptyHeadline = "Trash is empty",
@@ -418,10 +425,16 @@ private fun Content(
                 albums.addAssets(album.id, selection)
                 pickingAlbumFor = null
             },
-            // Created empty and then filled, because an album can be created with a list of
-            // ids and a selection may be a query instead. One extra request, once.
+            // A list of ids lands in the creation itself, so the album and its contents
+            // arrive together or not at all. Only a by-query selection has to be created
+            // and then filled, because that is the one the endpoint cannot express.
             onCreate = { name ->
-                albums.create(name) { album -> albums.addAssets(album.id, selection) }
+                val ids = selection.assetIds
+                if (ids != null) {
+                    albums.create(name, ids)
+                } else {
+                    albums.create(name) { album -> albums.addAssets(album.id, selection) }
+                }
                 pickingAlbumFor = null
             },
         )
@@ -440,6 +453,7 @@ private fun AlbumsPane(
     wide: Boolean,
     contentPadding: PaddingValues,
     accountId: String,
+    snackbar: SnackbarHostState,
     onOpen: (com.imogen.sdk.Album) -> Unit,
     onAddToAlbum: (AssetSelection) -> Unit,
     shortcuts: List<CollectionShortcut> = emptyList(),
@@ -484,6 +498,7 @@ private fun AlbumsPane(
                     session = session,
                     feed = feed,
                     columns = (columns - 2).coerceAtLeast(3),
+                    snackbar = snackbar,
                     contentPadding = contentPadding,
                     emptyHeadline = "This album is empty",
                     emptyBody = "Select photographs anywhere in the library and add them here.",
