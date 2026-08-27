@@ -1,6 +1,8 @@
 package com.imogen.android.ui
 
 import com.imogen.android.ui.timeline.TimelineIndex
+import com.imogen.android.ui.timeline.TimelineLayout
+import com.imogen.android.ui.timeline.TimelineMetrics
 import com.imogen.android.ui.timeline.dayBounds
 import com.imogen.sdk.TimelineBucket
 import org.junit.Assert.assertEquals
@@ -111,5 +113,117 @@ class TimelineIndexTest {
             "2026-08-27T00:00:00.000Z" to "2026-08-27T23:59:59.999Z",
             dayBounds("2026-08-27"),
         )
+    }
+}
+
+class TimelineLayoutTest {
+
+    private val metrics = TimelineMetrics(
+        columns = 3, rowHeight = 100f, headerHeight = 40f, viewportHeight = 0f,
+    )
+
+    private fun layout(vararg buckets: Pair<String, Long>) = TimelineLayout(
+        TimelineIndex(buckets.map { TimelineBucket(it.first, it.second) }),
+        metrics,
+    )
+
+    @Test
+    fun `a day is a heading plus however many rows its count needs`() {
+        assertEquals(140f, layout("2026-08-27" to 1L).totalHeight)
+        assertEquals(140f, layout("2026-08-27" to 3L).totalHeight)
+        assertEquals(240f, layout("2026-08-27" to 4L).totalHeight)
+    }
+
+    @Test
+    fun `days stack, and tops are monotonic`() {
+        val stacked = layout("2026-08-27" to 3L, "2026-08-26" to 1L, "2026-08-25" to 7L)
+
+        assertEquals(0f, stacked.topOfDay(0))
+        assertEquals(140f, stacked.topOfDay(1))
+        assertEquals(280f, stacked.topOfDay(2))
+        assertEquals(620f, stacked.totalHeight)
+    }
+
+    /**
+     * The bug this exists to fix.
+     *
+     * Driving a scrubber from a photograph's position in the list makes a one-photograph
+     * day and a twenty-five-photograph day nearly adjacent to the thumb while being nine
+     * rows apart on screen. The thumb then jumps as the content scrolls smoothly, which is
+     * what "janky" was.
+     */
+    @Test
+    fun `the rail measures the same thing the grid does`() {
+        val uneven = layout("2026-08-27" to 90L, "2020-01-01" to 5L, "2019-01-01" to 5L)
+
+        // 90 photos over 3 columns is 30 rows: 40 + 3000. Each small day is 40 + 200.
+        assertEquals(3520f, uneven.totalHeight)
+        // By photograph count that boundary would sit at 0.9; by height it is at 0.86.
+        assertEquals(3040f / 3520f, uneven.fractionOfDay(1), 0.0001f)
+    }
+
+    @Test
+    fun `dragging the rail and reading it back agree`() {
+        val stacked = layout("2026-08-27" to 30L, "2026-08-26" to 1L, "2026-08-25" to 12L)
+
+        for (day in 0..2) {
+            assertEquals(day, stacked.dayAtFraction(stacked.fractionOfDay(day)))
+        }
+    }
+
+    @Test
+    fun `the thumb reaches the bottom because the last screenful is not scrolled past`() {
+        val onScreen = TimelineLayout(
+            TimelineIndex(listOf(TimelineBucket("2026-08-27", 30))),
+            metrics.copy(viewportHeight = 500f),
+        )
+
+        assertEquals(540f, onScreen.scrollableHeight)
+        assertEquals(0, onScreen.dayAtFraction(1f))
+    }
+
+    @Test
+    fun `a viewport taller than the library does not divide by zero`() {
+        val tiny = TimelineLayout(
+            TimelineIndex(listOf(TimelineBucket("2026-08-27", 1))),
+            metrics.copy(viewportHeight = 9_000f),
+        )
+
+        assertEquals(1f, tiny.scrollableHeight)
+        assertEquals(0f, tiny.fractionOfDay(0))
+    }
+
+    @Test
+    fun `years are marked where their photographs are, not where their dates are`() {
+        val years = layout(
+            "2026-08-27" to 90L, "2026-01-01" to 3L, "2020-06-01" to 3L, "2019-06-01" to 3L,
+        )
+
+        val marks = years.yearMarks()
+        assertEquals(listOf(2026, 2020, 2019), marks.map { it.year })
+        assertEquals(0f, marks[0].fraction, 0.0001f)
+        assertTrue(marks[1].fraction > 0.8f)
+    }
+
+    @Test
+    fun `labels that would overlap are dropped, and the first is always kept`() {
+        val crowded = layout(*(0..19).map { "${2026 - it}-06-01" to 1L }.toTypedArray())
+
+        val thinned = crowded.yearMarks(minimumGapPx = 44f, railHeightPx = 400f)
+
+        assertEquals(2026, thinned.first().year)
+        assertTrue(thinned.size < 20)
+        thinned.zipWithNext { earlier, later ->
+            assertTrue((later.fraction - earlier.fraction) * 400f >= 44f)
+        }
+    }
+
+    @Test
+    fun `an empty library has no height and no marks`() {
+        val empty = layout()
+
+        assertEquals(0f, empty.totalHeight)
+        assertEquals(0, empty.dayAtFraction(0.5f))
+        assertTrue(empty.yearMarks().isEmpty())
     }
 }

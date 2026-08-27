@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The imogen mark: a square viewfinder with the aperture punched out of it, and the lens
+    sitting in the hole. The same geometry as the web interface's icon, on its 64-unit
+    canvas, so the two are recognisably the same thing.
+
+    Untinted here; the screens that use it apply a colour, because on the sign-in screen it
+    should be the theme's own.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="64dp"
+    android:height="64dp"
+    android:viewportWidth="64"
+    android:viewportHeight="64"
+    android:tint="?attr/colorControlNormal">
+
+    <!-- The frame, with the aperture removed by the even-odd rule. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M17,12 L47,12 A5,5 0 0 1 52,17 L52,47 A5,5 0 0 1 47,52 L17,52 A5,5 0 0 1 12,47 L12,17 A5,5 0 0 1 17,12 Z M32,21 A11,11 0 1 0 32,43 A11,11 0 1 0 32,21 Z" />
+
+    <!-- The lens. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M32,25.5 A6.5,6.5 0 1 0 32,38.5 A6.5,6.5 0 1 0 32,25.5 Z" />
+</vector>

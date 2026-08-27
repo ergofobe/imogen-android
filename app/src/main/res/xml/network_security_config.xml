@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    A self-hosted photo server is very often reached over plain http.
+
+    It sits on somebody's own network, at an address like `http://192.168.1.9:3000`, with
+    no certificate because there is no public name to issue one for. Android refuses
+    cleartext by default, and an app that inherits that default simply cannot talk to the
+    kind of server it exists to talk to.
+
+    iOS expresses this precisely — `NSAllowsLocalNetworking` permits cleartext to private
+    addresses and nowhere else. Android's network security configuration has no equivalent:
+    domain entries take names and IP literals, not ranges, so "the local network" cannot be
+    written down here.
+
+    So this permits cleartext, and the safety is in the app instead. Typing a bare hostname
+    produces https (see `normalizeServerUrl`), so plain http happens only when somebody
+    writes `http://` themselves, or when a server operator advertises a plain-http public
+    URL in the pairing code they generated. Both are deliberate acts by the person who owns
+    the server.
+-->
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <base-config cleartextTrafficPermitted="true" tools:ignore="InsecureBaseConfiguration">
+        <trust-anchors>
+            <certificates src="system" />
+            <!--
+                Certificates the user has installed themselves are trusted too: somebody
+                running their own certificate authority for their own home network is
+                exactly the person this application is for.
+            -->
+            <certificates src="user" tools:ignore="AcceptsUserCertificates" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

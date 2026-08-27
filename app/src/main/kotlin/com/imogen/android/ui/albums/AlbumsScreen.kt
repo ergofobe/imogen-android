@@ -4,12 +4,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -17,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -30,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -38,7 +42,6 @@ import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
 import com.imogen.android.data.Session
-import com.imogen.android.ui.common.EmptyState
 import com.imogen.android.ui.common.ErrorState
 import com.imogen.android.ui.common.Loading
 import com.imogen.sdk.Album
@@ -58,6 +61,7 @@ fun AlbumsScreen(
     onOpen: (Album) -> Unit,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
+    shortcuts: List<CollectionShortcut> = emptyList(),
 ) {
     val state by model.state.collectAsStateWithLifecycle()
     var naming by remember { mutableStateOf(false) }
@@ -67,15 +71,40 @@ fun AlbumsScreen(
             state.loading && state.albums.isEmpty() -> Loading()
             state.error != null && state.albums.isEmpty() ->
                 ErrorState(state.error!!, onRetry = model::refresh)
-            state.albums.isEmpty() -> EmptyState(
-                "No albums yet",
-                "An album is a way to keep a set of photographs together — a trip, a person, a year.",
-            )
             else -> LazyVerticalGrid(
                 columns = GridCells.Fixed(columns.coerceAtMost(6)),
                 contentPadding = contentPadding,
                 modifier = Modifier.fillMaxSize(),
             ) {
+                if (shortcuts.isNotEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Column {
+                            shortcuts.forEach { ShortcutRow(it) }
+                            HorizontalDivider(Modifier.padding(top = 8.dp))
+                            Text(
+                                "Albums",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(
+                                    start = 20.dp, end = 20.dp, top = 16.dp, bottom = 4.dp,
+                                ),
+                            )
+                        }
+                    }
+                }
+
+                if (state.albums.isEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Text(
+                            "An album is a way to keep a set of photographs together — a trip, "
+                                + "a person, a year.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                        )
+                    }
+                }
+
                 items(state.albums, key = { it.id }) { album ->
                     AlbumCover(session, album, onClick = { onOpen(album) })
                 }
@@ -99,6 +128,38 @@ fun AlbumsScreen(
                 naming = false
                 model.create(name)
             },
+        )
+    }
+}
+
+/**
+ * Somewhere else in the library, reached from here.
+ *
+ * A phone has room for four destinations along the bottom and imogen has seven, so
+ * People, Favourites and Trash live at the top of this screen — which is where Apple and
+ * Google both put them, and where somebody looking for "my photos of a person" already
+ * goes. On a tablet they are in the rail as well, because there is room.
+ */
+data class CollectionShortcut(
+    val label: String,
+    val icon: ImageVector,
+    val onClick: () -> Unit,
+)
+
+@Composable
+private fun ShortcutRow(shortcut: CollectionShortcut) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = shortcut.onClick)
+            .padding(horizontal = 20.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(shortcut.icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+        Text(
+            shortcut.label,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.padding(start = 16.dp),
         )
     }
 }

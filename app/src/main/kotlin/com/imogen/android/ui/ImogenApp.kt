@@ -43,6 +43,7 @@ import kotlinx.coroutines.launch
 import com.imogen.android.data.Account
 import com.imogen.android.data.Session
 import com.imogen.android.ui.albums.AlbumsScreen
+import com.imogen.android.ui.albums.CollectionShortcut
 import com.imogen.android.ui.albums.AlbumsViewModel
 import com.imogen.android.ui.onboarding.AddAccountScreen
 import com.imogen.android.ui.people.PeopleScreen
@@ -104,7 +105,19 @@ private enum class Destination(val label: String, val icon: ImageVector) {
     People("People", Icons.Filled.People),
     Favourites("Favourites", Icons.Filled.Favorite),
     Trash("Trash", Icons.Filled.Delete),
-    Settings("Settings", Icons.Filled.Settings),
+    Settings("Settings", Icons.Filled.Settings);
+
+    companion object {
+        /**
+         * What a phone shows along the bottom.
+         *
+         * Material puts the ceiling at five and means it: seven destinations on a
+         * navigation bar is labels wrapping onto two lines and targets too narrow to hit.
+         * The three left out are at the top of the Albums screen, which is where Apple and
+         * Google both put them.
+         */
+        val onABar = listOf(Photos, Search, Albums, Settings)
+    }
 }
 
 /**
@@ -116,6 +129,10 @@ private enum class Destination(val label: String, val icon: ImageVector) {
  */
 private sealed interface Overlay {
     data object None : Overlay
+
+    /** One of the destinations a phone has no room for along the bottom. */
+    data class Collection(val destination: Destination) : Overlay
+
     data class AlbumDetail(val id: String, val name: String) : Overlay
     data class PersonDetail(val id: String, val name: String) : Overlay
     data object AddAccount : Overlay
@@ -139,7 +156,9 @@ private fun Library(model: RootViewModel, account: Account) {
 
         NavigationSuiteScaffold(
             navigationSuiteItems = {
-                Destination.entries.forEach { entry ->
+                // A rail has room for all of them; a bar does not.
+                val shown = if (wide) Destination.entries else Destination.onABar
+                shown.forEach { entry ->
                     item(
                         selected = destination == entry,
                         onClick = {
@@ -263,6 +282,24 @@ private fun Content(
             return
         }
 
+        is Overlay.Collection -> {
+            // Rendered by the same branch that draws it as a destination on a tablet, so
+            // there is one implementation of each screen rather than two.
+            Content(
+                model = model,
+                session = session,
+                account = account,
+                destination = overlay.destination,
+                overlay = Overlay.None,
+                onOverlay = onOverlay,
+                columns = columns,
+                wide = wide,
+                contentPadding = contentPadding,
+                snackbar = snackbar,
+            )
+            return
+        }
+
         Overlay.None -> Unit
     }
 
@@ -297,6 +334,23 @@ private fun Content(
             onOpen = { onOverlay(Overlay.AlbumDetail(it.id, it.name)) },
             onAddToAlbum = addToAlbum,
             accountId = account.id,
+            // Only where the rail is absent: on a tablet these are already in it, and
+            // offering the same three things twice on one screen is clutter.
+            shortcuts = if (wide) {
+                emptyList()
+            } else {
+                listOf(
+                    CollectionShortcut("People", Icons.Filled.People) {
+                        onOverlay(Overlay.Collection(Destination.People))
+                    },
+                    CollectionShortcut("Favourites", Icons.Filled.Favorite) {
+                        onOverlay(Overlay.Collection(Destination.Favourites))
+                    },
+                    CollectionShortcut("Trash", Icons.Filled.Delete) {
+                        onOverlay(Overlay.Collection(Destination.Trash))
+                    },
+                )
+            },
         )
 
         Destination.People -> {
@@ -384,6 +438,7 @@ private fun AlbumsPane(
     accountId: String,
     onOpen: (com.imogen.sdk.Album) -> Unit,
     onAddToAlbum: (List<String>) -> Unit,
+    shortcuts: List<CollectionShortcut> = emptyList(),
 ) {
     if (!wide) {
         AlbumsScreen(
@@ -392,6 +447,7 @@ private fun AlbumsPane(
             columns = columns,
             contentPadding = contentPadding,
             onOpen = onOpen,
+            shortcuts = shortcuts,
         )
         return
     }
@@ -465,6 +521,7 @@ private fun BackupPane(model: RootViewModel, contentPadding: PaddingValues) {
 }
 
 private fun titleFor(destination: Destination, overlay: Overlay): String = when (overlay) {
+    is Overlay.Collection -> overlay.destination.label
     is Overlay.AlbumDetail -> overlay.name
     is Overlay.PersonDetail -> overlay.name
     Overlay.AddAccount -> "Add an account"

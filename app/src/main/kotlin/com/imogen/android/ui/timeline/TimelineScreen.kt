@@ -30,6 +30,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -38,6 +39,9 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -53,6 +57,8 @@ import com.imogen.android.ui.viewer.Viewer
 import com.imogen.android.ui.viewer.ViewerMode
 import com.imogen.sdk.Asset
 import com.imogen.sdk.AssetType
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
@@ -84,6 +90,9 @@ fun TimelineScreen(
     var opened by remember { mutableStateOf<Asset?>(null) }
     var details by remember { mutableStateOf<Asset?>(null) }
     var scrubbing by remember { mutableStateOf(false) }
+    var settle by remember { mutableStateOf<Job?>(null) }
+    /** The day at the top of the viewport, which is what the thumb draws itself against. */
+    var topDay by remember { mutableIntStateOf(0) }
 
     BackHandler(enabled = selection.isNotEmpty()) { selection = emptySet() }
 
@@ -106,8 +115,38 @@ fun TimelineScreen(
     }
 
     val index = state.index
-    val firstVisible by remember(grid) {
-        derivedStateOf { grid.firstVisibleItemIndex }
+    val density = LocalDensity.current
+
+    // Measured from the layout rather than read off the grid's `layoutInfo`, which changes
+    // on every scroll frame — reading that during composition recomposes the whole screen
+    // sixty times a second to learn a number that only changes on rotation.
+    var viewport by remember { mutableStateOf(IntSize.Zero) }
+
+    // What the grid is actually drawn with, so the rail measures the same thing it does.
+    val layout = remember(index, columns, viewport) {
+        val cell = if (columns > 0 && viewport.width > 0) {
+            viewport.width.toFloat() / columns
+        } else {
+            with(density) { 116.dp.toPx() }
+        }
+        TimelineLayout(
+            index,
+            TimelineMetrics(
+                columns = columns,
+                rowHeight = cell + with(density) { 2.dp.toPx() },
+                headerHeight = with(density) { 44.dp.toPx() },
+                viewportHeight = viewport.height.toFloat(),
+            ),
+        )
+    }
+
+    // The topmost visible cell, as a day. Read from the grid rather than tracked by hand
+    // so an ordinary scroll moves the thumb too, not just a drag on the rail.
+    val firstVisibleDay by remember(grid, index) {
+        derivedStateOf { index.bucketOf(grid.firstVisibleItemIndex) }
+    }
+    LaunchedEffect(firstVisibleDay) {
+        if (!scrubbing) topDay = firstVisibleDay
     }
 
     /**
@@ -136,7 +175,11 @@ fun TimelineScreen(
             }
     }
 
-    Box(modifier.fillMaxSize()) {
+    Box(
+        modifier
+            .fillMaxSize()
+            .onSizeChanged { viewport = it },
+    ) {
         LazyVerticalGrid(
             columns = GridCells.Fixed(columns),
             state = grid,
@@ -183,10 +226,21 @@ fun TimelineScreen(
         }
 
         Scrubber(
-            index = index,
-            firstVisibleEntry = firstVisible,
+            layout = layout,
+            day = topDay,
             onScrubbing = { scrubbing = it },
-            onSeek = { entry -> scope.launch { grid.scrollToItem(entry) } },
+            onSeek = { day ->
+                topDay = day
+                scope.launch { grid.scrollToItem(index.entryOfBucket(day)) }
+                // The design's rule: suspend fetching while the rail is moving and resume
+                // shortly after it settles, so a drag across fifteen years issues a couple
+                // of requests rather than forty.
+                settle?.cancel()
+                settle = scope.launch {
+                    delay(150)
+                    model.ensureLoaded(index.buckets[day].date)
+                }
+            },
             modifier = Modifier.align(Alignment.CenterEnd).padding(contentPadding),
         )
 

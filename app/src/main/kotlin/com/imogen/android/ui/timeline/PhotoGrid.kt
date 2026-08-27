@@ -44,6 +44,7 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
 /**
  * The grid, grouped by the day the photographs were taken.
@@ -198,7 +199,18 @@ private fun groupByDay(assets: List<Asset>): Map<String, List<Asset>> {
     return grouped
 }
 
-private val isoDay = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+/**
+ * Everything here works in UTC.
+ *
+ * The day strings being rendered are the server's bucket keys, and the server groups by the
+ * UTC calendar date. Parse one in local time and the reading is still right; compare it
+ * against a local "today" and it is not, so a photograph taken this evening in California
+ * is filed under a date that will not be today for another seven hours.
+ */
+private val utc: TimeZone = TimeZone.getTimeZone("UTC")
+
+private fun isoDay(): SimpleDateFormat =
+    SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = utc }
 
 /**
  * Rebuilt when the locale changes rather than cached once.
@@ -207,25 +219,26 @@ private val isoDay = SimpleDateFormat("yyyy-MM-dd", Locale.US)
  * who switches their phone to French then sees English day names until they force-stop it.
  */
 private fun dayFormat(pattern: String): SimpleDateFormat =
-    SimpleDateFormat(pattern, Locale.getDefault())
+    SimpleDateFormat(pattern, Locale.getDefault()).apply { timeZone = utc }
 
 /**
  * The heading for one day. The year is dropped for this year, because a timeline of
  * mostly-recent photographs repeating the same four digits down the page is noise.
  */
-fun timelineDayLabel(capturedAt: String): String {
-    val date = runCatching { isoDay.parse(capturedAt.take(10)) }.getOrNull()
+fun timelineDayLabel(capturedAt: String, now: Date = Date()): String {
+    val date = runCatching { isoDay().parse(capturedAt.take(10)) }.getOrNull()
         ?: return capturedAt.take(10)
 
-    val calendar = Calendar.getInstance().apply { time = date }
-    val now = Calendar.getInstance()
+    val calendar = Calendar.getInstance(utc).apply { time = date }
+    val today = Calendar.getInstance(utc).apply { time = now }
 
-    if (calendar.get(Calendar.YEAR) == now.get(Calendar.YEAR)) {
-        if (calendar.get(Calendar.DAY_OF_YEAR) == now.get(Calendar.DAY_OF_YEAR)) return "Today"
-        if (calendar.get(Calendar.DAY_OF_YEAR) == now.get(Calendar.DAY_OF_YEAR) - 1) return "Yesterday"
+    if (calendar.get(Calendar.YEAR) == today.get(Calendar.YEAR)) {
+        val days = calendar.get(Calendar.DAY_OF_YEAR) - today.get(Calendar.DAY_OF_YEAR)
+        if (days == 0) return "Today"
+        if (days == -1) return "Yesterday"
         return dayFormat("EEEE d MMMM").format(date)
     }
-    return dayFormat("d MMMM yyyy").format(Date(date.time))
+    return dayFormat("d MMMM yyyy").format(date)
 }
 
 /** How many columns fit, given the width somebody actually has. */
