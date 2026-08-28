@@ -57,6 +57,7 @@ import com.imogen.android.ui.timeline.TimelineViewModel
 import com.imogen.android.ui.timeline.columnsFor
 import com.imogen.android.ui.viewer.ViewerMode
 import com.imogen.sdk.AssetQuery
+import com.imogen.sdk.AssetSelection
 
 /**
  * The whole application, above the individual screens.
@@ -231,12 +232,17 @@ private fun Content(
     // selection is gone by the time the server answers.
     LaunchedEffect(albumsState.notice) {
         val notice = albumsState.notice ?: return@LaunchedEffect
-        snackbar.showSnackbar(notice)
-        albums.clearNotice()
+        // Cleared even if the wait is cut short, so a notice cannot outlive the screen that
+        // was showing it and fire again on the way back.
+        try {
+            snackbar.showSnackbar(notice)
+        } finally {
+            albums.clearNotice()
+        }
     }
 
-    var pickingAlbumFor by remember { mutableStateOf<List<String>?>(null) }
-    val addToAlbum: (List<String>) -> Unit = { pickingAlbumFor = it }
+    var pickingAlbumFor by remember { mutableStateOf<AssetSelection?>(null) }
+    val addToAlbum: (AssetSelection) -> Unit = { pickingAlbumFor = it }
 
     when (overlay) {
         is Overlay.AddAccount -> {
@@ -264,6 +270,7 @@ private fun Content(
                 session = session,
                 feed = feed,
                 columns = columns,
+                snackbar = snackbar,
                 contentPadding = contentPadding,
                 emptyHeadline = "This album is empty",
                 emptyBody = "Select photographs anywhere in the library and add them here.",
@@ -277,7 +284,9 @@ private fun Content(
                 session = session,
                 personId = overlay.id,
                 columns = columns,
+                snackbar = snackbar,
                 contentPadding = contentPadding,
+                onAddToAlbum = addToAlbum,
             )
             return
         }
@@ -313,6 +322,7 @@ private fun Content(
                 session = session,
                 model = timeline,
                 columns = columns,
+                snackbar = snackbar,
                 contentPadding = contentPadding,
                 onAddToAlbum = addToAlbum,
             )
@@ -321,6 +331,7 @@ private fun Content(
         Destination.Search -> SearchScreen(
             session = session,
             columns = columns,
+            snackbar = snackbar,
             onAddToAlbum = addToAlbum,
             contentPadding = contentPadding,
         )
@@ -331,6 +342,7 @@ private fun Content(
             columns = columns,
             wide = wide,
             contentPadding = contentPadding,
+            snackbar = snackbar,
             onOpen = { onOverlay(Overlay.AlbumDetail(it.id, it.name)) },
             onAddToAlbum = addToAlbum,
             accountId = account.id,
@@ -376,6 +388,7 @@ private fun Content(
                 session = session,
                 feed = feed,
                 columns = columns,
+                snackbar = snackbar,
                 contentPadding = contentPadding,
                 emptyHeadline = "No favourites yet",
                 emptyBody = "Tap the heart while looking at a photograph to keep it here.",
@@ -392,6 +405,7 @@ private fun Content(
                 session = session,
                 feed = feed,
                 columns = columns,
+                snackbar = snackbar,
                 contentPadding = contentPadding,
                 mode = ViewerMode.Trash,
                 emptyHeadline = "Trash is empty",
@@ -408,16 +422,24 @@ private fun Content(
         )
     }
 
-    pickingAlbumFor?.let { assetIds ->
+    pickingAlbumFor?.let { selection ->
         com.imogen.android.ui.albums.AlbumPicker(
             albums = albumsState.albums,
             onDismiss = { pickingAlbumFor = null },
             onChoose = { album ->
-                albums.addAssets(album.id, assetIds)
+                albums.addAssets(album.id, selection)
                 pickingAlbumFor = null
             },
+            // A list of ids lands in the creation itself, so the album and its contents
+            // arrive together or not at all. Only a by-query selection has to be created
+            // and then filled, because that is the one the endpoint cannot express.
             onCreate = { name ->
-                albums.create(name, assetIds)
+                val ids = selection.assetIds
+                if (ids != null) {
+                    albums.create(name, ids)
+                } else {
+                    albums.create(name) { album -> albums.addAssets(album.id, selection) }
+                }
                 pickingAlbumFor = null
             },
         )
@@ -436,8 +458,9 @@ private fun AlbumsPane(
     wide: Boolean,
     contentPadding: PaddingValues,
     accountId: String,
+    snackbar: SnackbarHostState,
     onOpen: (com.imogen.sdk.Album) -> Unit,
-    onAddToAlbum: (List<String>) -> Unit,
+    onAddToAlbum: (AssetSelection) -> Unit,
     shortcuts: List<CollectionShortcut> = emptyList(),
 ) {
     if (!wide) {
@@ -480,6 +503,7 @@ private fun AlbumsPane(
                     session = session,
                     feed = feed,
                     columns = (columns - 2).coerceAtLeast(3),
+                    snackbar = snackbar,
                     contentPadding = contentPadding,
                     emptyHeadline = "This album is empty",
                     emptyBody = "Select photographs anywhere in the library and add them here.",

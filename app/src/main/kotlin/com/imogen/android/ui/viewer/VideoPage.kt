@@ -16,7 +16,6 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import com.imogen.android.data.Session
-import com.imogen.sdk.Asset
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 
@@ -30,10 +29,10 @@ import okhttp3.OkHttpClient
  */
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
-fun VideoPage(session: Session, asset: Asset, playing: Boolean) {
+fun VideoPage(session: Session, assetId: String, playing: Boolean) {
     val context = LocalContext.current
 
-    val player = remember(asset.id) {
+    val player = remember(assetId) {
         val http = OkHttpClient()
         val factory = OkHttpDataSource.Factory(http).apply {
             // Read once, when the player is built. A token that expires mid-video is
@@ -50,7 +49,7 @@ fun VideoPage(session: Session, asset: Asset, playing: Boolean) {
             )
             .build()
             .apply {
-                setMediaItem(MediaItem.fromUri(session.assetUrl(asset.id, "original")))
+                setMediaItem(MediaItem.fromUri(session.assetUrl(assetId, "original")))
                 prepare()
                 repeatMode = ExoPlayer.REPEAT_MODE_OFF
             }
@@ -60,7 +59,7 @@ fun VideoPage(session: Session, asset: Asset, playing: Boolean) {
     // starts every one it passes and leaves them all running.
     LaunchedEffect(playing) { player.playWhenReady = playing }
 
-    DisposableEffect(asset.id) {
+    DisposableEffect(assetId) {
         onDispose { player.release() }
     }
 

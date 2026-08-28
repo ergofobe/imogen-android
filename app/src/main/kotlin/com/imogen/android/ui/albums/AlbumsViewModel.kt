@@ -8,6 +8,7 @@ import com.imogen.android.data.Session
 import com.imogen.sdk.Album
 import com.imogen.sdk.AlbumCreate
 import com.imogen.sdk.AlbumUpdate
+import com.imogen.sdk.AssetSelection
 import com.imogen.sdk.ImogenException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -43,6 +44,12 @@ class AlbumsViewModel(private val session: Session) : ViewModel() {
         }
     }
 
+    /**
+     * A list of ids goes in the creation itself, so "new album with these forty" is one
+     * request that either happens or does not. A by-query selection cannot — [AlbumCreate]
+     * takes ids and nothing else — so that one creates and then fills, and [then] is where
+     * the filling goes.
+     */
     fun create(name: String, assetIds: List<String>? = null, then: (Album) -> Unit = {}) {
         viewModelScope.launch {
             runCatching { session.client.albums.create(AlbumCreate(name = name, assetIds = assetIds)) }
@@ -50,7 +57,10 @@ class AlbumsViewModel(private val session: Session) : ViewModel() {
                     _state.update { it.copy(albums = it.albums + album) }
                     then(album)
                 }
-                .onFailure { error -> _state.update { it.copy(error = describe(error)) } }
+                // A notice, not an error: `error` is the screen's empty-and-broken state
+                // and is drawn only when there are no albums, so a failed creation for
+                // anybody who already has one went nowhere at all.
+                .onFailure { error -> _state.update { it.copy(notice = describe(error)) } }
         }
     }
 
@@ -77,10 +87,13 @@ class AlbumsViewModel(private val session: Session) : ViewModel() {
     /**
      * Adding is idempotent server-side, and the result says what actually changed — so a
      * photograph already in the album is reported as skipped rather than as added twice.
+     *
+     * Takes a selection rather than a list, so "everything this search found" goes over as
+     * the search rather than as however many thousand uuids it matched.
      */
-    fun addAssets(albumId: String, assetIds: List<String>) {
+    fun addAssets(albumId: String, selection: AssetSelection) {
         viewModelScope.launch {
-            runCatching { session.client.albums.addAssets(albumId, assetIds) }
+            runCatching { session.client.albums.addAssets(albumId, selection) }
                 .onSuccess { result ->
                     _state.update { state ->
                         state.copy(

@@ -1,88 +1,53 @@
 package com.imogen.android.ui.people
 
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.imogen.android.data.Session
-import com.imogen.android.ui.common.EmptyState
-import com.imogen.android.ui.common.Loading
-import com.imogen.android.ui.timeline.PhotoGrid
-import com.imogen.android.ui.viewer.DetailsSheet
-import com.imogen.android.ui.viewer.Viewer
-import com.imogen.android.ui.viewer.ViewerMode
-import com.imogen.sdk.Asset
+import com.imogen.android.ui.timeline.TimelineScreen
+import com.imogen.android.ui.timeline.TimelineViewModel
+import com.imogen.sdk.AssetFilter
+import com.imogen.sdk.AssetSelection
 
 /**
- * One person's photographs.
+ * One person's photographs — an ordinary timeline with a filter on it.
  *
- * Not a `PhotoBrowser`: the people endpoint hands back a person with their photographs
- * attached rather than a cursor-paged query, so there is nothing here to page through and
- * pretending otherwise would mean an `AssetQuery` filter the API does not have.
+ * `people.get(id).photos` was the obvious way to do this and the wrong one: that endpoint
+ * caps at five hundred and selects with no ordering, so somebody with three thousand
+ * photographs saw an arbitrary five hundred of them in uuid order. Grouped into days it
+ * read as scattered noise rather than as a life.
+ *
+ * `AssetFilter(personId = …)` scopes the day counts and the tiles alike, which makes this
+ * the same screen as the library: day headings, the segment-table rail, windowing, and
+ * eviction, none of it written twice.
  */
 @Composable
 fun PersonDetailScreen(
     session: Session,
     personId: String,
     columns: Int,
+    snackbar: SnackbarHostState,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
+    onAddToAlbum: ((AssetSelection) -> Unit)? = null,
 ) {
-    var photos by remember(personId) { mutableStateOf<List<Asset>?>(null) }
-    var openedAt by remember { mutableStateOf<Int?>(null) }
-    var details by remember { mutableStateOf<Asset?>(null) }
+    val model: TimelineViewModel = viewModel(
+        key = "person:${session.accountId}:$personId",
+        factory = TimelineViewModel.factory(session, AssetFilter(personId = personId)),
+    )
 
-    LaunchedEffect(personId) {
-        photos = runCatching { session.client.people.get(personId).photos }.getOrDefault(emptyList())
-    }
-
-    Box(modifier.fillMaxSize()) {
-        when (val loaded = photos) {
-            null -> Loading()
-            else -> if (loaded.isEmpty()) {
-                EmptyState("No photographs", "Nothing here is grouped under this person.")
-            } else {
-                PhotoGrid(
-                    session = session,
-                    assets = loaded,
-                    selection = emptySet(),
-                    columns = columns,
-                    contentPadding = contentPadding,
-                    onOpen = { openedAt = it },
-                    onToggleSelection = {},
-                )
-            }
-        }
-    }
-
-    val loaded = photos
-    if (loaded != null) {
-        openedAt?.let { index ->
-            Viewer(
-                session = session,
-                assets = loaded,
-                initialIndex = index,
-                mode = ViewerMode.Library,
-                onClose = { openedAt = null },
-                // Editing from here would need the list refetching to stay honest, and a
-                // person's page is somewhere you look rather than somewhere you tidy.
-                onFavorite = { _, _ -> },
-                onArchive = { _, _ -> },
-                onTrash = {},
-                onRestore = {},
-                onDetails = { details = it },
-            )
-        }
-    }
-
-    details?.let { asset ->
-        DetailsSheet(asset = asset, onDismiss = { details = null }, onDescriptionChanged = {})
-    }
+    TimelineScreen(
+        session = session,
+        model = model,
+        columns = columns,
+        snackbar = snackbar,
+        modifier = modifier,
+        contentPadding = contentPadding,
+        emptyHeadline = "No photographs",
+        emptyBody = "Nothing here is grouped under this person.",
+        onAddToAlbum = onAddToAlbum,
+    )
 }

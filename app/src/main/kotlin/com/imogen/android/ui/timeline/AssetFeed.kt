@@ -5,8 +5,13 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.imogen.android.data.Session
+import com.imogen.android.ui.common.restoredMessage
+import com.imogen.android.ui.common.toFilter
+import com.imogen.android.ui.common.trashedMessage
 import com.imogen.sdk.Asset
+import com.imogen.sdk.AssetFilter
 import com.imogen.sdk.AssetQuery
+import com.imogen.sdk.AssetSelection
 import com.imogen.sdk.AssetUpdate
 import com.imogen.sdk.ImogenException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,6 +26,8 @@ data class FeedState(
     val appending: Boolean = false,
     val exhausted: Boolean = false,
     val error: String? = null,
+    /** Something to say about a bulk action that has already happened, or failed to. */
+    val notice: String? = null,
 )
 
 /**
@@ -42,6 +49,9 @@ class AssetFeed(
     private val _state = MutableStateFlow(FeedState())
     val state: StateFlow<FeedState> = _state.asStateFlow()
 
+    /** What this feed is showing, as a filter a bulk mutation can be aimed at. */
+    val filter: AssetFilter = query.toFilter()
+
     private var cursor: String? = null
 
     init {
@@ -53,16 +63,24 @@ class AssetFeed(
         _state.update { it.copy(loading = true, error = null, exhausted = false) }
         viewModelScope.launch {
             runCatching { session.client.assets.list(query.copy(limit = PAGE)) }
+                // A notice outlives the reload that follows the action it describes:
+                // replacing the state wholesale would throw away the sentence saying what
+                // had just happened before anybody had read it.
                 .onSuccess { page ->
                     cursor = page.nextCursor
-                    _state.value = FeedState(
-                        items = page.items,
-                        loading = false,
-                        exhausted = page.nextCursor == null,
-                    )
+                    _state.update {
+                        FeedState(
+                            items = page.items,
+                            loading = false,
+                            exhausted = page.nextCursor == null,
+                            notice = it.notice,
+                        )
+                    }
                 }
                 .onFailure { error ->
-                    _state.value = FeedState(loading = false, error = describe(error))
+                    _state.update {
+                        FeedState(loading = false, error = describe(error), notice = it.notice)
+                    }
                 }
         }
     }
@@ -102,23 +120,50 @@ class AssetFeed(
         edit(asset, AssetUpdate(description = description)) { it.copy(description = description) }
 
     /** Moves photographs to the trash, where they wait rather than being destroyed. */
-    fun trash(ids: List<String>) {
-        val removed = _state.value.items.filter { it.id in ids }
-        _state.update { it.copy(items = it.items.filterNot { asset -> asset.id in ids }) }
+    fun trash(selection: AssetSelection) =
+        mutate(selection, ::trashedMessage) { session.client.assets.trash(it) }
+
+    fun restore(selection: AssetSelection) =
+        mutate(selection, ::restoredMessage) { session.client.assets.restore(it) }
+
+    /**
+     * A list of ids leaves the feed at once and comes back if the server refuses. A query
+     * cannot be applied here — what it matches is mostly unfetched — so the feed is simply
+     * loaded again once the server has acted.
+     *
+     * Either way the outcome is said out loud when the action was a query: somebody who
+     * agreed to a number is owed the number that actually happened, and a refusal that
+     * leaves the screen unchanged is indistinguishable from one that did nothing.
+     */
+    private fun mutate(
+        selection: AssetSelection,
+        describeResult: (Long) -> String,
+        act: suspend (AssetSelection) -> Long,
+    ) {
+        val ids = selection.assetIds?.toSet()
+        if (ids != null && ids.isEmpty()) return
+
+        val removed = if (ids == null) emptyList() else _state.value.items.filter { it.id in ids }
+        if (ids != null) {
+            _state.update { it.copy(items = it.items.filterNot { asset -> asset.id in ids }) }
+        }
+
         viewModelScope.launch {
-            runCatching { session.client.assets.trash(ids) }
-                .onFailure { putBack(removed) }
+            runCatching { act(selection) }
+                .onSuccess { count ->
+                    if (ids == null) {
+                        refresh()
+                        _state.update { it.copy(notice = describeResult(count)) }
+                    }
+                }
+                .onFailure { error ->
+                    putBack(removed)
+                    _state.update { it.copy(notice = describe(error)) }
+                }
         }
     }
 
-    fun restore(ids: List<String>) {
-        val removed = _state.value.items.filter { it.id in ids }
-        _state.update { it.copy(items = it.items.filterNot { asset -> asset.id in ids }) }
-        viewModelScope.launch {
-            runCatching { session.client.assets.restore(ids) }
-                .onFailure { putBack(removed) }
-        }
-    }
+    fun clearNotice() = _state.update { it.copy(notice = null) }
 
     private fun edit(asset: Asset, patch: AssetUpdate, optimistic: (Asset) -> Asset) {
         val before = asset

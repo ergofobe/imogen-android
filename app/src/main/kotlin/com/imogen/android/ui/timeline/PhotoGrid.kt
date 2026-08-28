@@ -38,6 +38,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.imogen.android.data.Session
 import com.imogen.android.ui.common.AssetImage
+import com.imogen.android.ui.common.Selection
 import com.imogen.sdk.Asset
 import com.imogen.sdk.AssetType
 import java.text.SimpleDateFormat
@@ -61,7 +62,14 @@ import java.util.TimeZone
 fun PhotoGrid(
     session: Session,
     assets: List<Asset>,
-    selection: Set<String>,
+    selection: Selection,
+    /**
+     * Whether a selection is under way, decided by whoever owns it rather than derived
+     * here. A by-query selection with everything unticked is empty in a way this cannot
+     * see, and a grid that disagreed with its own selection bar left every tile ticking
+     * instead of opening with no visible way back out.
+     */
+    selecting: Boolean,
     onOpen: (Int) -> Unit,
     onToggleSelection: (Asset) -> Unit,
     modifier: Modifier = Modifier,
@@ -70,7 +78,6 @@ fun PhotoGrid(
     contentPadding: PaddingValues = PaddingValues(0.dp),
     onNearEnd: () -> Unit = {},
 ) {
-    val selecting = selection.isNotEmpty()
 
     // Grouping is recomputed only when the list actually changes, not on every frame of
     // a scroll — this walks every asset, and a timeline is not a short list.
@@ -111,7 +118,7 @@ fun PhotoGrid(
                 PhotoTile(
                     session = session,
                     asset = asset,
-                    selected = asset.id in selection,
+                    selected = selection.holds(asset.id),
                     selecting = selecting,
                     onClick = {
                         if (selecting) onToggleSelection(asset) else onOpen(assets.indexOf(asset))
