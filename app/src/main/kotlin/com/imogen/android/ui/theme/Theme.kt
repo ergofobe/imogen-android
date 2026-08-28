@@ -18,14 +18,15 @@ import androidx.compose.ui.platform.LocalContext
  * about photographs.
  */
 private val Safelight = Color(0xFFE39B5C)
+private val LightSafelight = Color(0xFFB4622A)
 private val Ink = Color(0xFF17191C)
-private val Paper = Color(0xFFFBF7F2)
+private val Paper = Color(0xFFFBFAF7)
 private val Sunken = Color(0xFFF1EBE3)
-private val DarkPaper = Color(0xFF121110)
+private val DarkPaper = Color(0xFF101113)
 private val DarkSunken = Color(0xFF1D1B19)
 
 private val LightScheme = lightColorScheme(
-    primary = Safelight,
+    primary = LightSafelight,
     onPrimary = Color(0xFF241505),
     primaryContainer = Color(0xFFF6DEC6),
     onPrimaryContainer = Color(0xFF2C1A07),
