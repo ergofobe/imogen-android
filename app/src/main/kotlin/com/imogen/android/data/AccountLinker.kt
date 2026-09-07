@@ -26,6 +26,31 @@ private val CLIENT_NAME = "imogen for Android (${Build.MANUFACTURER} ${Build.MOD
 
 private val Context.pendingDataStore: DataStore<Preferences> by preferencesDataStore("pending-auth")
 
+/** File scope so a test decodes a stored record with the same configuration the app uses. */
+internal val pendingJson = Json { ignoreUnknownKeys = true }
+
+/**
+ * The half of an authorization the app holds while the browser has the other half.
+ *
+ * Mirrors the SDK's [com.imogen.sdk.PendingAuthorization] minus the URL, which has been
+ * opened by the time this is written.
+ */
+@Serializable
+internal data class Pending(
+    val serverUrl: String,
+    val clientId: String,
+    val codeVerifier: String,
+    val state: String,
+    val redirectUri: String,
+    /**
+     * Defaulted, unlike the SDK's field: a sign-in begun by an earlier build wrote no
+     * `resource`, and that record can be read back here mid-flow. The SDK leaves it
+     * undefaulted to catch a caller reconstructing the record by hand — which is what
+     * completeBrowserSignIn does, and it passes this through explicitly.
+     */
+    val resource: String? = null,
+)
+
 /**
  * Adding an account, by either of the two routes.
  *
@@ -38,7 +63,6 @@ class AccountLinker(
     private val context: Context,
     private val store: AccountStore,
 ) {
-    private val json = Json { ignoreUnknownKeys = true }
     private val key = stringPreferencesKey("pending")
 
     /** Reads a scanned string or a tapped link. Null when it is not one of ours. */
@@ -93,6 +117,7 @@ class AccountLinker(
                     codeVerifier = pending.codeVerifier,
                     state = pending.state,
                     redirectUri = pending.redirectUri,
+                    resource = pending.resource,
                 ),
             )
             pending.authorizationUrl
@@ -110,6 +135,7 @@ class AccountLinker(
                     state = pending.state,
                     redirectUri = pending.redirectUri,
                     clientId = pending.clientId,
+                    resource = pending.resource,
                 ),
                 callbackUrl,
             )
@@ -148,28 +174,19 @@ class AccountLinker(
     }
 
     private suspend fun remember(pending: Pending) {
-        val sealed = SecretBox.seal(json.encodeToString(pending).toByteArray())
+        val sealed = SecretBox.seal(pendingJson.encodeToString(pending).toByteArray())
         context.pendingDataStore.edit { it[key] = Base64.encodeToString(sealed, Base64.NO_WRAP) }
     }
 
     private suspend fun recall(): Pending? {
         val stored = context.pendingDataStore.data.first()[key] ?: return null
         val opened = SecretBox.open(Base64.decode(stored, Base64.NO_WRAP)) ?: return null
-        return runCatching { json.decodeFromString<Pending>(String(opened)) }.getOrNull()
+        return runCatching { pendingJson.decodeFromString<Pending>(String(opened)) }.getOrNull()
     }
 
     private suspend fun forget() {
         context.pendingDataStore.edit { it.remove(key) }
     }
-
-    @Serializable
-    private data class Pending(
-        val serverUrl: String,
-        val clientId: String,
-        val codeVerifier: String,
-        val state: String,
-        val redirectUri: String,
-    )
 
     companion object {
         /**
