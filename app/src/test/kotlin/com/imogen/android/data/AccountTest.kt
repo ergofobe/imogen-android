@@ -1,5 +1,6 @@
 package com.imogen.android.data
 
+import kotlinx.serialization.encodeToString
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -102,5 +103,42 @@ class ServerUrlTest {
     fun `loopback is allowed over plain http, since that is where a test server is`() {
         assertEquals("http://localhost:3000", normalizeServerUrl("localhost:3000"))
         assertEquals("http://127.0.0.1:3000", normalizeServerUrl("127.0.0.1:3000"))
+    }
+}
+
+class PendingTest {
+
+    /**
+     * A sign-in begun by the previous build wrote no `resource`, and the browser can come
+     * back to this one mid-flow. Decoding has to survive that: the alternative is a
+     * redirect that reports no sign-in is waiting, which looks like nothing happened.
+     */
+    @Test
+    fun `a record written before the resource indicator still decodes`() {
+        val legacy = """
+            {"serverUrl":"https://photos.example.com","clientId":"client-1",
+             "codeVerifier":"verifier","state":"state","redirectUri":"imogen://oauth"}
+        """.trimIndent()
+
+        val pending = pendingJson.decodeFromString<Pending>(legacy)
+
+        assertNull(pending.resource)
+        assertEquals("client-1", pending.clientId)
+    }
+
+    @Test
+    fun `a resource survives the round trip through storage`() {
+        val pending = Pending(
+            serverUrl = "https://photos.example.com",
+            clientId = "client-1",
+            codeVerifier = "verifier",
+            state = "state",
+            redirectUri = "imogen://oauth",
+            resource = "https://photos.example.com/",
+        )
+
+        val decoded = pendingJson.decodeFromString<Pending>(pendingJson.encodeToString(pending))
+
+        assertEquals(pending, decoded)
     }
 }
