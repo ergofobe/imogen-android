@@ -23,7 +23,10 @@ not a lost server.
 
 ## Installing it
 
-There is no release build yet. To build one:
+Tagged releases are at [github.com/ergofobe/imogen-android/releases](https://github.com/ergofobe/imogen-android/releases),
+but they mark points in history rather than ship an APK — CI verifies an unsigned release
+build on every push, but no workflow attaches it to the release. Until that changes,
+build from source:
 
 ```bash
 git clone --recurse-submodules https://github.com/ergofobe/imogen-android
