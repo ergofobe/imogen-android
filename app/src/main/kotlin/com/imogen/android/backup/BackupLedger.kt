@@ -9,6 +9,8 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -34,6 +36,12 @@ data class UploadRecord(
      */
     val attempts: Int = 0,
     val lastError: String? = null,
+    /**
+     * What the file was called when it was tried. Kept here rather than looked up later
+     * because the point of the row is to describe an attempt, and a file that has since
+     * been deleted off the phone still deserves to be nameable in a list of failures.
+     */
+    val displayName: String? = null,
 )
 
 @Dao
@@ -48,6 +56,23 @@ interface UploadDao {
     @Query("select count(*) from uploads where accountId = :accountId and assetId is not null")
     fun countFor(accountId: String): Flow<Int>
 
+    /** Everything outstanding, across every account, newest first. */
+    @Query("select * from uploads where assetId is null order by uploadedAt desc")
+    fun failures(): Flow<List<UploadRecord>>
+
+    /**
+     * Puts one file back in the running. `BackupWorker` decides what to skip from
+     * `attempts`, so zeroing it is what actually undoes the giving-up.
+     */
+    @Query(
+        "update uploads set attempts = 0, lastError = null " +
+            "where accountId = :accountId and deviceAssetId = :deviceAssetId and assetId is null",
+    )
+    suspend fun clearAttempts(accountId: String, deviceAssetId: String)
+
+    @Query("update uploads set attempts = 0, lastError = null where assetId is null")
+    suspend fun clearAllAttempts()
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun put(record: UploadRecord)
 
@@ -55,7 +80,18 @@ interface UploadDao {
     suspend fun clearFor(accountId: String)
 }
 
-@Database(entities = [UploadRecord::class], version = 1, exportSchema = true)
+/**
+ * Additive, and deliberately not destructive. Losing this table costs nothing visible and
+ * a great deal of everything else: the phone would re-read, re-hash and re-post the whole
+ * camera roll to be told it need not have bothered.
+ */
+val MIGRATION_1_2 = object : Migration(1, 2) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE uploads ADD COLUMN displayName TEXT")
+    }
+}
+
+@Database(entities = [UploadRecord::class], version = 2, exportSchema = true)
 abstract class BackupLedger : RoomDatabase() {
     abstract fun uploads(): UploadDao
 
@@ -68,7 +104,7 @@ abstract class BackupLedger : RoomDatabase() {
                 context.applicationContext,
                 BackupLedger::class.java,
                 "backup-ledger",
-            ).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2).build().also { instance = it }
         }
     }
 }

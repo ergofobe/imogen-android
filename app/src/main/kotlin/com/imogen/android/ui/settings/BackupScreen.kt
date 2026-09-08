@@ -33,6 +33,7 @@ import android.text.format.DateUtils
 import com.imogen.android.backup.AccountProgress
 import com.imogen.android.backup.BackupStatus
 import com.imogen.android.backup.FailureReason
+import com.imogen.android.backup.FailureSummary
 import com.imogen.android.backup.MediaAccess
 import com.imogen.android.backup.PassState
 import com.imogen.android.backup.WaitingReason
@@ -51,9 +52,11 @@ fun BackupScreen(
     preferences: com.imogen.android.backup.BackupPreferences,
     status: BackupStatus,
     mediaAccess: MediaAccess,
+    failures: FailureSummary,
     onPreferencesChanged: (com.imogen.android.backup.BackupPreferences) -> Unit,
     onRequestAccess: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenFailures: () -> Unit,
     onRunNow: () -> Unit,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
@@ -99,6 +102,10 @@ fun BackupScreen(
         }
 
         PassRow(status.pass)
+
+        if (failures.total > 0) {
+            FailuresRow(failures, onOpenFailures)
+        }
 
         HorizontalDivider()
         SectionHeading("Copy to")
@@ -306,4 +313,21 @@ private fun AccountStatusRow(progress: AccountProgress?) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+/**
+ * A count, and a way to reach the files behind it.
+ *
+ * Given-up files are named first because they are the ones nothing else will ever mention
+ * again: a pass that skips them reports success, and the resting count simply omits them.
+ */
+@Composable
+private fun FailuresRow(summary: FailureSummary, onOpen: () -> Unit) {
+    val message = when {
+        summary.givenUp > 0 && summary.willRetry > 0 ->
+            "${summary.givenUp} couldn't be backed up, ${summary.willRetry} still to try"
+        summary.givenUp > 0 -> "${summary.givenUp} couldn't be backed up"
+        else -> "${summary.willRetry} still to try"
+    }
+    TextButton(onOpen, Modifier.padding(horizontal = 12.dp)) { Text(message) }
 }

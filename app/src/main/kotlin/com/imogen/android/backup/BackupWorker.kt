@@ -224,6 +224,7 @@ class BackupWorker(
         uploadedAt = System.currentTimeMillis(),
         attempts = (existing?.attempts ?: 0) + 1,
         lastError = message,
+        displayName = item.displayName,
     )
 
     /**
