@@ -23,10 +23,23 @@ not a lost server.
 
 ## Installing it
 
-Tagged releases are at [github.com/ergofobe/imogen-android/releases](https://github.com/ergofobe/imogen-android/releases),
-but they mark points in history rather than ship an APK — CI verifies an unsigned release
-build on every push, but no workflow attaches it to the release. Until that changes,
-build from source:
+Every tagged release at [github.com/ergofobe/imogen-android/releases](https://github.com/ergofobe/imogen-android/releases)
+carries two APKs and a `SHA256SUMS`. There is no signing key in this repository, so which
+one you want depends on whether you are willing to sign it:
+
+- `imogen-vX.Y.Z-debug.apk` installs as it is. It carries the standard Android debug
+  signature, and its application id ends in `.debug` so it sits beside a store install
+  rather than replacing one.
+- `imogen-vX.Y.Z-unsigned.apk` is the R8-optimised release build. Android refuses an
+  unsigned package, so sign it with your own key first — aligning before signing, because
+  `apksigner` preserves the alignment it is given:
+
+  ```bash
+  zipalign -p 4 imogen-vX.Y.Z-unsigned.apk imogen.apk
+  apksigner sign --ks my-release.jks imogen.apk
+  ```
+
+Or build from source:
 
 ```bash
 git clone --recurse-submodules https://github.com/ergofobe/imogen-android

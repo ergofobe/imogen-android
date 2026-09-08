@@ -1,0 +1,65 @@
+name: Release
+
+# Tag a version and the APKs build themselves. `workflow_dispatch` does the same work
+# without publishing anything, so the packaging can be exercised before a tag exists.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The SDK is a submodule, so the tag being released names the SDK commit it is
+          # built against. Nothing has to remember to pin it.
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Both, and for different readers. The release APK is what R8 actually produced, but
+      # there is no signing key in this repository, so it installs nowhere until whoever
+      # downloads it signs it themselves. The debug APK is signed with the SDK's debug key
+      # and therefore side-loads as-is; `applicationIdSuffix = ".debug"` keeps it from
+      # colliding with a real install.
+      - name: Build
+        run: ./gradlew :app:assembleDebug :app:assembleRelease
+
+      - name: Name the APKs after the ref and checksum them
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release-unsigned.apk \
+            "dist/imogen-${GITHUB_REF_NAME}-unsigned.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk \
+            "dist/imogen-${GITHUB_REF_NAME}-debug.apk"
+          cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: dist/*
+          if-no-files-found: error
+
+      # Only a tag publishes. A dispatch run builds everything and stops, so the packaging
+      # can be exercised without inventing a release to throw away.
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
