@@ -45,6 +45,16 @@ class BackupWorker(
         val destinations = app.accountStore.current().backingUpTo
         if (destinations.isEmpty()) return Result.success()
 
+        // Before the scan, because MediaStore answers a query it will not serve with an
+        // empty cursor and no error at all. Without this the pass reads nothing, reports
+        // success, and looks from the outside exactly like a camera roll with no
+        // photographs in it.
+        if (MediaPermission.check(applicationContext, preferences.includeVideos) ==
+            MediaAccess.Denied
+        ) {
+            return Result.failure(workDataOf(RESULT_REASON to REASON_MEDIA_ACCESS))
+        }
+
         val ledger = BackupLedger.get(applicationContext).uploads()
         val media = withContext(Dispatchers.IO) {
             MediaScanner(applicationContext).scan(
@@ -224,6 +234,10 @@ class BackupWorker(
         const val PROGRESS_COMPLETED = "completed"
         const val PROGRESS_TOTAL = "total"
         const val PROGRESS_FILENAME = "filename"
+
+        /** Why a pass gave up, on the output of a failed run. */
+        const val RESULT_REASON = "reason"
+        const val REASON_MEDIA_ACCESS = "media-access"
 
         private const val CHANNEL = "backup"
         private const val NOTIFICATION_ID = 4201
