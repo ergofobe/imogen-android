@@ -138,6 +138,7 @@ private sealed interface Overlay {
     data class PersonDetail(val id: String, val name: String) : Overlay
     data object AddAccount : Overlay
     data object Backup : Overlay
+    data object FailedUploads : Overlay
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -257,7 +258,12 @@ private fun Content(
         }
 
         is Overlay.Backup -> {
-            BackupPane(model, contentPadding)
+            BackupPane(model, contentPadding, onOverlay)
+            return
+        }
+
+        is Overlay.FailedUploads -> {
+            FailedUploadsPane(model, contentPadding)
             return
         }
 
@@ -515,7 +521,11 @@ private fun AlbumsPane(
 }
 
 @Composable
-private fun BackupPane(model: RootViewModel, contentPadding: PaddingValues) {
+private fun BackupPane(
+    model: RootViewModel,
+    contentPadding: PaddingValues,
+    onOverlay: (Overlay) -> Unit,
+) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val app = context.applicationContext as com.imogen.android.ImogenApplication
     val preferences by app.backupSettings.preferences.collectAsStateWithLifecycle(
@@ -574,10 +584,16 @@ private fun BackupPane(model: RootViewModel, contentPadding: PaddingValues) {
         onDispose { lifecycle.removeObserver(observer) }
     }
 
+    val failures by androidx.compose.runtime.remember {
+        com.imogen.android.backup.BackupLedger.get(context).uploads().failures()
+    }.collectAsStateWithLifecycle(initialValue = emptyList())
+
     com.imogen.android.ui.settings.BackupScreen(
         model = model,
         preferences = preferences,
         status = status,
+        failures = com.imogen.android.backup.summarise(failures.map(::asFailedUpload)),
+        onOpenFailures = { onOverlay(Overlay.FailedUploads) },
         mediaAccess = access,
         contentPadding = contentPadding,
         onPreferencesChanged = { next ->
@@ -616,5 +632,56 @@ private fun titleFor(destination: Destination, overlay: Overlay): String = when 
     is Overlay.PersonDetail -> overlay.name
     Overlay.AddAccount -> "Add an account"
     Overlay.Backup -> "Photo backup"
+    Overlay.FailedUploads -> "Couldn't be backed up"
     Overlay.None -> destination.label
+}
+
+/** Ledger row to the shape the screen reads. */
+private fun asFailedUpload(record: com.imogen.android.backup.UploadRecord) =
+    com.imogen.android.backup.FailedUpload(
+        accountId = record.accountId,
+        deviceAssetId = record.deviceAssetId,
+        displayName = record.displayName,
+        attempts = record.attempts,
+        lastError = record.lastError,
+    )
+
+@Composable
+private fun FailedUploadsPane(model: RootViewModel, contentPadding: PaddingValues) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val ledger = androidx.compose.runtime.remember {
+        com.imogen.android.backup.BackupLedger.get(context).uploads()
+    }
+    val rows by androidx.compose.runtime.remember { ledger.failures() }
+        .collectAsStateWithLifecycle(initialValue = emptyList())
+    val book by model.book.collectAsStateWithLifecycle()
+
+    com.imogen.android.ui.settings.FailedUploadsScreen(
+        failures = rows.map(::asFailedUpload),
+        serverLabels = book?.accounts.orEmpty().associate { it.id to it.serverLabel },
+        contentPadding = contentPadding,
+        onRetry = { failure ->
+            scope.launch {
+                ledger.clearAttempts(failure.accountId, failure.deviceAssetId)
+                // Asking again is the point; waiting six hours for the periodic pass to
+                // notice would make the button look like it did nothing.
+                com.imogen.android.backup.BackupScheduler.runNow(
+                    context,
+                    (context.applicationContext as com.imogen.android.ImogenApplication)
+                        .backupSettings.current(),
+                )
+            }
+        },
+        onRetryAll = {
+            scope.launch {
+                ledger.clearAllAttempts()
+                com.imogen.android.backup.BackupScheduler.runNow(
+                    context,
+                    (context.applicationContext as com.imogen.android.ImogenApplication)
+                        .backupSettings.current(),
+                )
+            }
+        },
+    )
 }
