@@ -525,16 +525,73 @@ private fun BackupPane(model: RootViewModel, contentPadding: PaddingValues) {
         .collectAsStateWithLifecycle(initialValue = null)
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
+    // Re-read rather than remembered across the whole screen: the answer changes while
+    // the app is in the background, both from the settings app and from turning videos
+    // on, which needs a permission the images-only grant does not include.
+    var access by androidx.compose.runtime.remember(preferences.includeVideos) {
+        androidx.compose.runtime.mutableStateOf(
+            com.imogen.android.backup.MediaPermission.check(context, preferences.includeVideos),
+        )
+    }
+    val request = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions(),
+    ) { granted ->
+        access = com.imogen.android.backup.MediaPermission.accessFrom(
+            android.os.Build.VERSION.SDK_INT,
+            preferences.includeVideos,
+            granted,
+        )
+        // A grant is only useful if something then goes and reads the roll.
+        if (access != com.imogen.android.backup.MediaAccess.Denied) {
+            scope.launch {
+                com.imogen.android.backup.BackupScheduler.runNow(context, app.backupSettings.current())
+            }
+        }
+    }
+
+    // Coming back from the settings app is the other way this answer changes, and it
+    // arrives as a resume rather than as a result.
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    androidx.compose.runtime.DisposableEffect(lifecycle, preferences.includeVideos) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                access = com.imogen.android.backup.MediaPermission.check(
+                    context,
+                    preferences.includeVideos,
+                )
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+
     com.imogen.android.ui.settings.BackupScreen(
         model = model,
         preferences = preferences,
         progress = progress,
+        mediaAccess = access,
         contentPadding = contentPadding,
         onPreferencesChanged = { next ->
             scope.launch {
                 app.backupSettings.update { next }
                 com.imogen.android.backup.BackupScheduler.sync(context, next)
             }
+        },
+        onRequestAccess = {
+            request.launch(
+                com.imogen.android.backup.MediaPermission.required(
+                    android.os.Build.VERSION.SDK_INT,
+                    preferences.includeVideos,
+                ).toTypedArray(),
+            )
+        },
+        onOpenSettings = {
+            context.startActivity(
+                android.content.Intent(
+                    android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    android.net.Uri.fromParts("package", context.packageName, null),
+                ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
         },
         onRunNow = {
             scope.launch {
