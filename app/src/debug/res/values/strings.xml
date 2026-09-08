@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        The debug build has its own package name, so it sits in the launcher beside a
+        release build rather than replacing it. Without this both icons say "imogen" and
+        the only way to tell them apart is to open one.
+    -->
+    <string name="app_name">imogen (debug)</string>
+</resources>
