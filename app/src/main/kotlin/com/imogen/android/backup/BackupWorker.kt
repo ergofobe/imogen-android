@@ -187,7 +187,7 @@ class BackupWorker(
             if (error.isRetryable || error.status == 0) {
                 Outcome.Unavailable
             } else {
-                ledger.put(failure(account, item, existing, error.message))
+                ledger.put(failure(account, item, existing, describe(error)))
                 Outcome.Rejected
             }
         } catch (error: Exception) {
@@ -197,6 +197,19 @@ class BackupWorker(
         } finally {
             scratch?.delete()
         }
+    }
+
+    /**
+     * The server names the offending fields in `details`; the sentence on its own says
+     * only that something was wrong. A ledger full of "the request did not match what
+     * this endpoint expects" identifies nothing, which is how every upload came to be
+     * failing without anybody being able to say why.
+     */
+    private fun describe(error: ImogenException): String {
+        val fields = error.details.orEmpty()
+            .entries
+            .joinToString("; ") { (field, messages) -> "$field: ${messages.joinToString(", ")}" }
+        return if (fields.isEmpty()) error.message else "${error.message} ($fields)"
     }
 
     private fun failure(
