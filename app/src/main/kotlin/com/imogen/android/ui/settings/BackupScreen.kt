@@ -29,8 +29,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.imogen.android.backup.BackupProgress
+import android.text.format.DateUtils
+import com.imogen.android.backup.AccountProgress
+import com.imogen.android.backup.BackupStatus
+import com.imogen.android.backup.FailureReason
 import com.imogen.android.backup.MediaAccess
+import com.imogen.android.backup.PassState
+import com.imogen.android.backup.WaitingReason
 import com.imogen.android.ui.RootViewModel
 
 /**
@@ -44,7 +49,7 @@ import com.imogen.android.ui.RootViewModel
 fun BackupScreen(
     model: RootViewModel,
     preferences: com.imogen.android.backup.BackupPreferences,
-    progress: BackupProgress?,
+    status: BackupStatus,
     mediaAccess: MediaAccess,
     onPreferencesChanged: (com.imogen.android.backup.BackupPreferences) -> Unit,
     onRequestAccess: () -> Unit,
@@ -93,22 +98,7 @@ fun BackupScreen(
             )
         }
 
-        progress?.let {
-            Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
-                LinearProgressIndicator(
-                    progress = { it.completed.toFloat() / it.total.coerceAtLeast(1) },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Text(
-                    "${it.completed} of ${it.total}" + (it.filename?.let { name -> " · $name" } ?: ""),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 6.dp),
-                )
-            }
-        }
+        PassRow(status.pass)
 
         HorizontalDivider()
         SectionHeading("Copy to")
@@ -127,6 +117,12 @@ fun BackupScreen(
                 enabled = preferences.enabled,
                 onChange = { model.setBackupEnabled(account.id, it) },
             )
+            // Under the account it belongs to, rather than one bar over all of them:
+            // choosing three servers means three copies, and three separate answers to
+            // how far along it is.
+            if (account.backupEnabled) {
+                AccountStatusRow(status.accounts.firstOrNull { it.accountId == account.id })
+            }
         }
 
         HorizontalDivider()
@@ -165,11 +161,14 @@ fun BackupScreen(
             onChange = { onPreferencesChanged(preferences.copy(cameraOnly = it)) },
         )
 
+        val busy = status.pass is PassState.Running || status.pass is PassState.Scanning
         Button(
             onClick = onRunNow,
-            enabled = preferences.enabled && accounts.any { it.backupEnabled },
+            // Not while a pass is going: the one-shot is enqueued with KEEP, so pressing
+            // it would be a no-op, and a button that does nothing is what started all this.
+            enabled = preferences.enabled && accounts.any { it.backupEnabled } && !busy,
             modifier = Modifier.fillMaxWidth().padding(20.dp),
-        ) { Text("Back up now") }
+        ) { Text(if (busy) "Backing up…" else "Back up now") }
     }
 }
 
@@ -230,5 +229,81 @@ private fun MediaAccessRow(
                 }
             }
         }
+    }
+}
+
+/**
+ * What the pass as a whole is doing, when that is not simply "running" — the per-account
+ * rows say that better than a sentence could.
+ */
+@Composable
+private fun PassRow(pass: PassState) {
+    val message = when (pass) {
+        PassState.Scanning -> "Reading your camera roll…"
+        is PassState.Waiting -> when (pass.reason) {
+            WaitingReason.Network -> "Waiting for a network"
+            WaitingReason.Wifi -> "Waiting for Wi-Fi"
+            WaitingReason.Charging -> "Waiting to charge"
+            WaitingReason.Soon -> "Starting shortly"
+        }
+        // The missing-access row above says this one far better than a line here could.
+        is PassState.Failed -> when (pass.reason) {
+            FailureReason.MediaAccess -> null
+            FailureReason.Unknown -> "The last backup could not finish. It will try again."
+        }
+        PassState.Running, PassState.Idle -> null
+    } ?: return
+
+    Text(
+        message,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+    )
+}
+
+/**
+ * One destination's answer to "is it working, and how far has it got".
+ *
+ * There is always something to say here. A row that goes blank between passes is what
+ * made a finished backup and a stalled one look identical.
+ */
+@Composable
+private fun AccountStatusRow(progress: AccountProgress?) {
+    Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 12.dp)) {
+        if (progress != null && progress.total > 0) {
+            LinearProgressIndicator(
+                progress = { progress.completed.toFloat() / progress.total.coerceAtLeast(1) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                "${progress.completed} of ${progress.total}" +
+                    (progress.filename?.let { " · $it" } ?: ""),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+            return@Column
+        }
+
+        val backedUp = progress?.backedUp ?: 0
+        val when_ = progress?.lastCompletedAt?.let {
+            DateUtils.getRelativeTimeSpanString(
+                it,
+                System.currentTimeMillis(),
+                DateUtils.MINUTE_IN_MILLIS,
+            )
+        }
+        Text(
+            when {
+                backedUp == 0 && when_ == null -> "Nothing backed up yet"
+                when_ == null -> "$backedUp backed up"
+                else -> "$backedUp backed up · $when_"
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }

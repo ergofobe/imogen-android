@@ -521,9 +521,18 @@ private fun BackupPane(model: RootViewModel, contentPadding: PaddingValues) {
     val preferences by app.backupSettings.preferences.collectAsStateWithLifecycle(
         initialValue = com.imogen.android.backup.BackupPreferences(),
     )
-    val progress by com.imogen.android.backup.BackupScheduler.progress(context)
-        .collectAsStateWithLifecycle(initialValue = null)
     val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+    val book by model.book.collectAsStateWithLifecycle()
+    val accountIds = book?.accounts.orEmpty().map { it.id }
+    val status by androidx.compose.runtime.remember(accountIds, preferences) {
+        com.imogen.android.backup.BackupScheduler.status(context, accountIds, preferences)
+    }.collectAsStateWithLifecycle(
+        initialValue = com.imogen.android.backup.BackupStatus(
+            pass = com.imogen.android.backup.PassState.Idle,
+            accounts = emptyList(),
+        ),
+    )
 
     // Re-read rather than remembered across the whole screen: the answer changes while
     // the app is in the background, both from the settings app and from turning videos
@@ -568,7 +577,7 @@ private fun BackupPane(model: RootViewModel, contentPadding: PaddingValues) {
     com.imogen.android.ui.settings.BackupScreen(
         model = model,
         preferences = preferences,
-        progress = progress,
+        status = status,
         mediaAccess = access,
         contentPadding = contentPadding,
         onPreferencesChanged = { next ->

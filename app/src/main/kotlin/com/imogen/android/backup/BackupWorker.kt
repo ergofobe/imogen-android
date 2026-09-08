@@ -55,6 +55,11 @@ class BackupWorker(
             return Result.failure(workDataOf(RESULT_REASON to REASON_MEDIA_ACCESS))
         }
 
+        // Said before the scan rather than after it: reading several thousand MediaStore
+        // rows takes long enough that reporting nothing for the whole of it is what makes
+        // the button look dead.
+        setProgress(workDataOf(PROGRESS_SCANNING to true))
+
         val ledger = BackupLedger.get(applicationContext).uploads()
         val media = withContext(Dispatchers.IO) {
             MediaScanner(applicationContext).scan(
@@ -80,7 +85,17 @@ class BackupWorker(
         }
 
         val total = outstanding.values.sumOf { it.size }
-        if (total == 0) return Result.success()
+        if (total == 0) {
+            BackupState(applicationContext).recordCompleted(
+                destinations.map { it.id },
+                System.currentTimeMillis(),
+            )
+            return Result.success()
+        }
+
+        val ids = destinations.map { it.id }
+        val totals = ids.map { outstanding.getValue(it).size }.toIntArray()
+        val perAccount = IntArray(ids.size)
 
         var completed = 0
         var retryable = false
@@ -92,16 +107,29 @@ class BackupWorker(
 
                 setProgress(
                     workDataOf(
+                        PROGRESS_ACCOUNTS to ids.toTypedArray(),
+                        PROGRESS_TOTALS to totals,
+                        PROGRESS_PER_ACCOUNT to perAccount.copyOf(),
                         PROGRESS_COMPLETED to completed,
                         PROGRESS_TOTAL to total,
                         PROGRESS_FILENAME to item.displayName,
+                        PROGRESS_ACCOUNT to account.id,
                     ),
                 )
                 setForegroundSafely(completed, total)
 
+                val slot = ids.indexOf(account.id)
                 when (val outcome = upload(app.sessions.sessionFor(account), item, account)) {
-                    Outcome.Uploaded -> completed += 1
-                    Outcome.Rejected -> completed += 1
+                    Outcome.Uploaded -> {
+                        completed += 1
+                        perAccount[slot] += 1
+                    }
+                    // Counted as dealt with, because it will not be tried again. Leaving
+                    // it out would strand the bar one short of its total for ever.
+                    Outcome.Rejected -> {
+                        completed += 1
+                        perAccount[slot] += 1
+                    }
                     // The server or the network is having a bad day. Stop pushing at it
                     // and let WorkManager's backoff decide when to come back.
                     Outcome.Unavailable -> {
@@ -113,7 +141,10 @@ class BackupWorker(
             if (retryable) break
         }
 
-        return if (retryable) Result.retry() else Result.success()
+        if (retryable) return Result.retry()
+
+        BackupState(applicationContext).recordCompleted(ids, System.currentTimeMillis())
+        return Result.success()
     }
 
     private enum class Outcome { Uploaded, Rejected, Unavailable }
@@ -234,6 +265,15 @@ class BackupWorker(
         const val PROGRESS_COMPLETED = "completed"
         const val PROGRESS_TOTAL = "total"
         const val PROGRESS_FILENAME = "filename"
+        const val PROGRESS_SCANNING = "scanning"
+
+        // Parallel arrays rather than anything structured: WorkManager's Data is a flat
+        // map of primitives and arrays of them, and a copy per destination is what the
+        // screen draws a row from.
+        const val PROGRESS_ACCOUNTS = "accounts"
+        const val PROGRESS_TOTALS = "totals"
+        const val PROGRESS_PER_ACCOUNT = "perAccount"
+        const val PROGRESS_ACCOUNT = "account"
 
         /** Why a pass gave up, on the output of a failed run. */
         const val RESULT_REASON = "reason"
