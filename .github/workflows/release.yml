@@ -1,0 +1,53 @@
+name: Release
+
+# Tagging builds the APK that gets released; it does not publish it. The release key is
+# not a CI secret — see CONTRIBUTING.md — so the tag run leaves a workflow artifact for a
+# maintainer to sign and upload. `workflow_dispatch` does the same work off a branch.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The SDK is a submodule, so the tag being released names the SDK commit it is
+          # built against. Nothing has to remember to pin it.
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Release only. A debug APK is signed with whatever debug keystore the runner
+      # generated for itself that morning, so shipping one would hand every release a
+      # different signature and no upgrade path — and it is `debuggable`, which is not a
+      # thing to hand out for a client holding someone's server tokens.
+      - name: Build
+        run: ./gradlew :app:assembleRelease
+
+      # AGP already zipaligns this, and apksigner preserves the alignment it is given, so
+      # the signing step downstream needs nothing but the key.
+      - name: Name the APK after the ref
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release-unsigned.apk \
+            "dist/imogen-${GITHUB_REF_NAME}-unsigned.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: dist/*
+          if-no-files-found: error

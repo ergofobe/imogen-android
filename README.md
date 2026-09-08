@@ -23,10 +23,19 @@ not a lost server.
 
 ## Installing it
 
-Tagged releases are at [github.com/ergofobe/imogen-android/releases](https://github.com/ergofobe/imogen-android/releases),
-but they mark points in history rather than ship an APK — CI verifies an unsigned release
-build on every push, but no workflow attaches it to the release. Until that changes,
-build from source:
+Tagged releases at [github.com/ergofobe/imogen-android/releases](https://github.com/ergofobe/imogen-android/releases)
+carry a signed `imogen-vX.Y.Z.apk` and a `SHA256SUMS` to check it against:
+
+```bash
+sha256sum --check --ignore-missing SHA256SUMS
+```
+
+The signature is the maintainer's, not Google's, so Android will ask you to allow
+installing from wherever you downloaded it. It stays the same key from one release to the
+next, so upgrades install over the top. Tags older than this arrangement have no APK
+attached.
+
+Or build from source:
 
 ```bash
 git clone --recurse-submodules https://github.com/ergofobe/imogen-android
