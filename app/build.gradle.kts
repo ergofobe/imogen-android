@@ -14,8 +14,15 @@ plugins {
 // tarball has no history — so this yields an empty string and the label falls back to
 // the plain `versionName`.
 //
-// `--match=` matches no tag, which leaves `--always` to print the abbreviated sha on its
-// own. `--dirty` marks a tree with uncommitted changes to tracked files.
+// Tags are suppressed (`--match=` matches none, leaving `--always` to print the
+// abbreviated sha alone) because the label already carries `versionName`; a leading
+// `v0.2.3-5-` would only repeat it. It is also what makes this work on CI, where
+// `actions/checkout` clones at depth 1 and there are no tags to find.
+//
+// Every way this can fail warns. The failures are silent by design — the build must not
+// break over absent metadata — but a debug build that has quietly lost its commit looks
+// exactly like a correct release build, so the one signal is this log line and the unit
+// test that asserts a debug build carries a sha.
 val gitSha: String = run {
     val described = try {
         val out = providers.exec {
@@ -23,13 +30,27 @@ val gitSha: String = run {
             commandLine("git", "describe", "--always", "--dirty", "--abbrev=7", "--match=")
             isIgnoreExitValue = true
         }
-        if (out.result.get().exitValue == 0) out.standardOutput.asText.get().trim() else ""
-    } catch (_: Exception) {
+        val exit = out.result.get().exitValue
+        if (exit == 0) {
+            out.standardOutput.asText.get().trim()
+        } else {
+            logger.warn("imogen: `git describe` exited $exit; this build will not name its commit.")
+            ""
+        }
+    } catch (e: Exception) {
+        logger.warn("imogen: could not run git (${e.message}); this build will not name its commit.")
         ""
     }
     // The value is pasted into a generated string literal, so anything that is not a
     // short sha is dropped rather than embedded.
-    if (described.matches(Regex("[0-9a-f]{7,40}(-dirty)?"))) described else ""
+    when {
+        described.isEmpty() -> ""
+        described.matches(Regex("[0-9a-f]{7,40}(-dirty)?")) -> described
+        else -> {
+            logger.warn("imogen: ignoring unexpected `git describe` output '$described'.")
+            ""
+        }
+    }
 }
 
 android {

@@ -25,32 +25,44 @@ class VersionLabelTest {
     }
 
     @Test
-    fun `a checkout with no history falls back to the version`() {
-        // A `git archive` tarball has no history, so the build records an empty sha
-        // rather than failing. Whitespace counts as empty: it is what a trimmed blank
-        // command output leaves behind.
+    fun `an absent sha falls back to the version rather than an empty bracket`() {
         assertEquals("0.2.3", versionLabel("0.2.3", ""))
         assertEquals("0.2.3", versionLabel("0.2.3", "   "))
     }
 
     @Test
-    fun `every label is non-empty and starts with the manifest version`() {
-        // The guard against the two drifting apart: whatever the git side produces, what
-        // reaches the screen still begins with what `versionName` says.
-        for (sha in listOf("", "   ", "71f0202", "71f0202-dirty")) {
-            val label = versionLabel(BuildConfig.VERSION_NAME, sha)
-            assertTrue("empty label for sha '$sha'", label.isNotEmpty())
-            assertTrue("'$label' does not start with the manifest version", label.startsWith(BuildConfig.VERSION_NAME))
-        }
+    fun `the build records a well-formed sha, or nothing at all`() {
+        // The build drops anything that is not a short sha rather than pasting it into a
+        // generated string literal. This is that contract seen from the other side.
+        assertTrue(
+            "GIT_SHA is '${BuildConfig.GIT_SHA}'",
+            BuildConfig.GIT_SHA.matches(Regex("([0-9a-f]{7,40}(-dirty)?)?")),
+        )
     }
 
     @Test
-    fun `the label this build would actually show holds to the same guard`() {
-        // Not a restatement of the case above: this one runs against the real
-        // `buildConfigField`, so a git command that started returning something
-        // unexpected fails here rather than on a phone.
-        val label = versionLabel(BuildConfig.VERSION_NAME, BuildConfig.GIT_SHA)
-        assertTrue("empty label", label.isNotEmpty())
-        assertTrue("'$label' does not start with the manifest version", label.startsWith(BuildConfig.VERSION_NAME))
+    fun `this debug build knows which commit it came from`() {
+        // The assertion with teeth. Every path on the Gradle side degrades to an empty
+        // sha in silence — a refused repository, no git on the PATH, a flag that stops
+        // meaning what it meant — and a debug build that has quietly lost its commit is
+        // indistinguishable from a correct release build. That failure is invisible
+        // everywhere except here.
+        //
+        // Safe to assert unconditionally: unit tests run the debug variant, and they run
+        // from a checkout. The one case with no history is a source archive, which has no
+        // submodule either and so cannot build at all.
+        assertTrue("this build recorded no commit", BuildConfig.GIT_SHA.isNotEmpty())
+    }
+
+    @Test
+    fun `the label About shows is the manifest's version, not a typed one`() {
+        // Pins the wiring rather than the text: fails if anyone names a version by hand
+        // here instead of reading it from the manifest. Deliberately does not restate
+        // that the sha is present — the test above owns that, and one broken git
+        // invocation should fail one test.
+        assertEquals(
+            versionLabel(BuildConfig.VERSION_NAME, BuildConfig.GIT_SHA),
+            aboutVersionLabel(),
+        )
     }
 }
