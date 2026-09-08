@@ -8,6 +8,51 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+// Derived, never typed. A version number copied into source is a version number that
+// goes stale: the server's health check claimed 0.1.0 through three releases doing
+// exactly that. Missing git metadata is normal rather than an error — a `git archive`
+// tarball has no history — so this yields an empty string and the label falls back to
+// the plain `versionName`.
+//
+// Tags are suppressed (`--match=` matches none, leaving `--always` to print the
+// abbreviated sha alone) because the label already carries `versionName`; a leading
+// `v0.2.3-5-` would only repeat it. It is also what makes this work on CI, where
+// `actions/checkout` clones at depth 1 and there are no tags to find.
+//
+// Every way this can fail warns. The failures are silent by design — the build must not
+// break over absent metadata — but a debug build that has quietly lost its commit looks
+// exactly like a correct release build, so the one signal is this log line and the unit
+// test that asserts a debug build carries a sha.
+val gitSha: String = run {
+    val described = try {
+        val out = providers.exec {
+            workingDir = rootDir
+            commandLine("git", "describe", "--always", "--dirty", "--abbrev=7", "--match=")
+            isIgnoreExitValue = true
+        }
+        val exit = out.result.get().exitValue
+        if (exit == 0) {
+            out.standardOutput.asText.get().trim()
+        } else {
+            logger.warn("imogen: `git describe` exited $exit; this build will not name its commit.")
+            ""
+        }
+    } catch (e: Exception) {
+        logger.warn("imogen: could not run git (${e.message}); this build will not name its commit.")
+        ""
+    }
+    // The value is pasted into a generated string literal, so anything that is not a
+    // short sha is dropped rather than embedded.
+    when {
+        described.isEmpty() -> ""
+        described.matches(Regex("[0-9a-f]{7,40}(-dirty)?")) -> described
+        else -> {
+            logger.warn("imogen: ignoring unexpected `git describe` output '$described'.")
+            ""
+        }
+    }
+}
+
 android {
     namespace = "com.imogen.android"
     compileSdk = 36
@@ -29,9 +74,13 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // A release is identified by its tag. Recording the sha here as well would
+            // invalidate the build cache on every commit for a string nobody reads.
+            buildConfigField("String", "GIT_SHA", "\"\"")
         }
         debug {
             applicationIdSuffix = ".debug"
+            buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
         }
     }
 
@@ -42,6 +91,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     testOptions {

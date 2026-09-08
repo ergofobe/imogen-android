@@ -105,6 +105,12 @@ fun SettingsScreen(
         HorizontalDivider()
         SectionHeading("About")
         Text(
+            aboutVersionLabel(),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+        )
+        Text(
             "imogen for Android is a client for your own imogen server. Administration — " +
                 "accounts, the processing queue, what is shared publicly — stays in the web " +
                 "interface, where a signed-in browser session is what unlocks it.",
