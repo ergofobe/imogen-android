@@ -3,6 +3,7 @@ package com.imogen.android.ui.settings
 import com.imogen.android.BuildConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 
 class VersionLabelTest {
@@ -48,9 +49,13 @@ class VersionLabelTest {
         // indistinguishable from a correct release build. That failure is invisible
         // everywhere except here.
         //
-        // Safe to assert unconditionally: unit tests run the debug variant, and they run
-        // from a checkout. The one case with no history is a source archive, which has no
-        // submodule either and so cannot build at all.
+        // Only the debug variant claims a sha; release pins it empty on purpose, and this
+        // file is compiled against both. Without the assumption `testReleaseUnitTest` —
+        // and so `./gradlew build` — goes red on a build that is behaving correctly.
+        //
+        // Where it does run, it runs from a checkout: the one case with no history is a
+        // source archive, which has no submodule either and so cannot build at all.
+        assumeTrue(BuildConfig.DEBUG)
         assertTrue("this build recorded no commit", BuildConfig.GIT_SHA.isNotEmpty())
     }
 
