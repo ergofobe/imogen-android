@@ -7,7 +7,9 @@
 #
 #   scripts/sign-release.sh v0.2.3
 #
-# The keystore defaults to ~/.android/imogen-release.jks; override with IMOGEN_KEYSTORE.
+# The keystore defaults to ~/.config/imogen/imogen-release.p12; override with
+# IMOGEN_KEYSTORE. Under ~/.config because that is the sort of path a dotfile backup
+# already covers — ~/.android is a cache directory and yours probably does not.
 set -euo pipefail
 
 tag=${1:-}
@@ -16,7 +18,7 @@ if [ -z "$tag" ]; then
   exit 2
 fi
 
-keystore=${IMOGEN_KEYSTORE:-$HOME/.android/imogen-release.jks}
+keystore=${IMOGEN_KEYSTORE:-$HOME/.config/imogen/imogen-release.p12}
 if [ ! -f "$keystore" ]; then
   echo "error: no keystore at $keystore" >&2
   echo "It must be the same key every release — Android identifies the app by its" >&2

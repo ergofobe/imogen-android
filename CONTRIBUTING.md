@@ -48,6 +48,18 @@ from a clean checkout, not whatever a working tree held — signs it, prints the
 and uploads the APK and a `SHA256SUMS` to the release. `apksigner` prompts for the keystore
 password, so run it yourself rather than handing it to an agent.
 
+The keystore lives at `~/.config/imogen/imogen-release.p12` (override with
+`IMOGEN_KEYSTORE`). Create it once:
+
+```bash
+mkdir -p ~/.config/imogen
+keytool -genkeypair -v -keystore ~/.config/imogen/imogen-release.p12 \
+  -storetype PKCS12 -alias imogen -keyalg RSA -keysize 4096 -validity 10000
+```
+
+Back it up somewhere that survives losing the machine, and check that your backups
+actually cover the path — `~/.android` is a cache directory and most do not.
+
 It must be the **same key every release**. Android identifies an app by its signing
 certificate, so a new key is a new app: existing users get
 `INSTALL_FAILED_UPDATE_INCOMPATIBLE` and have to uninstall, losing their local library and
