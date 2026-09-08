@@ -8,6 +8,30 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+// Derived, never typed. A version number copied into source is a version number that
+// goes stale: the server's health check claimed 0.1.0 through three releases doing
+// exactly that. Missing git metadata is normal rather than an error — a `git archive`
+// tarball has no history — so this yields an empty string and the label falls back to
+// the plain `versionName`.
+//
+// `--match=` matches no tag, which leaves `--always` to print the abbreviated sha on its
+// own. `--dirty` marks a tree with uncommitted changes to tracked files.
+val gitSha: String = run {
+    val described = try {
+        val out = providers.exec {
+            workingDir = rootDir
+            commandLine("git", "describe", "--always", "--dirty", "--abbrev=7", "--match=")
+            isIgnoreExitValue = true
+        }
+        if (out.result.get().exitValue == 0) out.standardOutput.asText.get().trim() else ""
+    } catch (_: Exception) {
+        ""
+    }
+    // The value is pasted into a generated string literal, so anything that is not a
+    // short sha is dropped rather than embedded.
+    if (described.matches(Regex("[0-9a-f]{7,40}(-dirty)?"))) described else ""
+}
+
 android {
     namespace = "com.imogen.android"
     compileSdk = 36
@@ -29,9 +53,13 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // A release is identified by its tag. Recording the sha here as well would
+            // invalidate the build cache on every commit for a string nobody reads.
+            buildConfigField("String", "GIT_SHA", "\"\"")
         }
         debug {
             applicationIdSuffix = ".debug"
+            buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
         }
     }
 
@@ -42,6 +70,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     testOptions {

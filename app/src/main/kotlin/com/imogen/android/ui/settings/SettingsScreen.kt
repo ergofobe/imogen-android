@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.imogen.android.BuildConfig
 import com.imogen.android.data.Account
 import com.imogen.android.ui.RootViewModel
 
@@ -104,6 +105,12 @@ fun SettingsScreen(
 
         HorizontalDivider()
         SectionHeading("About")
+        Text(
+            versionLabel(BuildConfig.VERSION_NAME, BuildConfig.GIT_SHA),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+        )
         Text(
             "imogen for Android is a client for your own imogen server. Administration — " +
                 "accounts, the processing queue, what is shared publicly — stays in the web " +
