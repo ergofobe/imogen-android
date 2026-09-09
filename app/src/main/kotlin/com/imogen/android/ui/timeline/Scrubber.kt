@@ -27,6 +27,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -78,6 +79,9 @@ fun Scrubber(
     val density = LocalDensity.current
     val haptics = LocalHapticFeedback.current
 
+    // Read by the gesture, which outlives any one composition.
+    val currentDay by rememberUpdatedState(day)
+
     val fraction = if (dragging) dragFraction else layout.fractionOfDay(day)
     // Animated only at rest: following a finger through a spring lags behind it.
     val settled by animateFloatAsState(fraction, label = "scrubber")
@@ -86,56 +90,15 @@ fun Scrubber(
     val thumbHeight = 48.dp
     val thumbPx = with(density) { thumbHeight.toPx() }
 
+    // The strip is only a place to draw: nothing on it takes a touch except the thumb
+    // below, so the photographs under the rest of it stay tappable and scrollable.
     Box(
         modifier
             .fillMaxHeight()
             .width(96.dp)
-            .semantics {
-                contentDescription = "Scroll through time"
-            }
             // Measured on layout rather than when a gesture starts: the year marks are
             // thinned against this, and a rail one pixel tall keeps exactly one of them.
-            .onSizeChanged { trackHeight = (it.height - thumbPx).coerceAtLeast(1f) }
-            .pointerInput(layout) {
-                fun seekTo(y: Float) {
-                    dragFraction = ((y - thumbPx / 2) / trackHeight).coerceIn(0f, 1f)
-                    val landing = layout.dayAtFraction(dragFraction)
-                    if (landing != dragDay) {
-                        // One tick per day crossed would buzz continuously across a
-                        // decade; per month is enough to feel the rail moving.
-                        if (monthOf(layout.index.buckets[landing].date) !=
-                            monthOf(layout.index.buckets[dragDay].date)
-                        ) {
-                            haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
-                        }
-                        dragDay = landing
-                    }
-                    onSeek(landing)
-                }
-
-                detectVerticalDragGestures(
-                    onDragStart = { start ->
-                        dragging = true
-                        onScrubbing(true)
-                        haptics.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
-                        seekTo(start.y)
-                    },
-                    onDragEnd = {
-                        dragging = false
-                        onScrubbing(false)
-                        // Seek once more on release: the grid only fetches days when the
-                        // drag stops, so this is the request that actually matters.
-                        onSeek(dragDay)
-                    },
-                    onDragCancel = {
-                        dragging = false
-                        onScrubbing(false)
-                    },
-                ) { change, amount ->
-                    change.consume()
-                    seekTo(change.position.y.coerceIn(0f, size.height.toFloat()) + amount * 0)
-                }
-            },
+            .onSizeChanged { trackHeight = (it.height - thumbPx).coerceAtLeast(1f) },
     ) {
         val trackDp = with(density) { trackHeight.toDp() }
         val marks = remember(layout, trackHeight) {
@@ -208,31 +171,97 @@ fun Scrubber(
             }
         }
 
-        Surface(
-            shape = RoundedCornerShape(50),
-            tonalElevation = if (dragging) 8.dp else 3.dp,
-            color = if (dragging) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                MaterialTheme.colorScheme.surfaceVariant
-            },
+        // The thumb is the whole gesture surface, padded out to a 48dp touch target. An
+        // earlier rail took the drag across its full height and width, which read well as
+        // "the thumb does not have to be hit exactly" and badly as "the last column of
+        // photographs cannot be tapped": Compose routes a touch to the topmost sibling
+        // under it, and the rail is drawn over the grid. Only the thumb is now that
+        // sibling, so the touch either lands on it or falls through to a photograph.
+        //
+        // The drag is followed by its deltas rather than its position: this box moves with
+        // the thumb, so a position in its own coordinates would chase itself.
+        Box(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .offset(y = trackDp * position)
-                .padding(end = 6.dp)
-                .size(width = 32.dp, height = thumbHeight - 8.dp),
+                .size(thumbHeight)
+                .semantics {
+                    contentDescription = "Scroll through time"
+                }
+                .pointerInput(layout) {
+                    var dragY = 0f
+
+                    fun seekTo(y: Float) {
+                        dragFraction = ((y - thumbPx / 2) / trackHeight).coerceIn(0f, 1f)
+                        val landing = layout.dayAtFraction(dragFraction)
+                        if (landing != dragDay) {
+                            // One tick per day crossed would buzz continuously across a
+                            // decade; per month is enough to feel the rail moving.
+                            if (monthOf(layout.index.buckets[landing].date) !=
+                                monthOf(layout.index.buckets[dragDay].date)
+                            ) {
+                                haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                            }
+                            dragDay = landing
+                        }
+                        onSeek(landing)
+                    }
+
+                    detectVerticalDragGestures(
+                        onDragStart = {
+                            dragging = true
+                            onScrubbing(true)
+                            haptics.performHapticFeedback(
+                                HapticFeedbackType.GestureThresholdActivate,
+                            )
+                            // Taken hold of where it is, not snapped under the finger.
+                            dragDay = currentDay
+                            dragFraction = layout.fractionOfDay(currentDay)
+                            dragY = dragFraction * trackHeight + thumbPx / 2
+                        },
+                        onDragEnd = {
+                            dragging = false
+                            onScrubbing(false)
+                            // Seek once more on release: the grid only fetches days when
+                            // the drag stops, so this is the request that actually matters.
+                            onSeek(dragDay)
+                        },
+                        onDragCancel = {
+                            dragging = false
+                            onScrubbing(false)
+                        },
+                    ) { change, amount ->
+                        change.consume()
+                        dragY += amount
+                        seekTo(dragY)
+                    }
+                },
+            contentAlignment = Alignment.CenterEnd,
         ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    Icons.Filled.DragHandle,
-                    contentDescription = null,
-                    tint = if (dragging) {
-                        MaterialTheme.colorScheme.onPrimary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                    modifier = Modifier.size(18.dp),
-                )
+            Surface(
+                shape = RoundedCornerShape(50),
+                tonalElevation = if (dragging) 8.dp else 3.dp,
+                color = if (dragging) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant
+                },
+                modifier = Modifier
+                    .padding(end = 6.dp)
+                    .size(width = 32.dp, height = thumbHeight - 8.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Filled.DragHandle,
+                        contentDescription = null,
+                        tint = if (dragging) {
+                            MaterialTheme.colorScheme.onPrimary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
             }
         }
     }
