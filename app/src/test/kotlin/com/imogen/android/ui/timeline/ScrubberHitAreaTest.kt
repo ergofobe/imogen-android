@@ -10,11 +10,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.down
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.moveBy
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.up
 import androidx.compose.ui.unit.dp
@@ -51,8 +54,7 @@ class ScrubberHitAreaTest {
     private var taps = 0
     private var scrubbing = false
     private val seeks = mutableListOf<Int>()
-    // The grid follows every seek, as the timeline's does, so the thumb stays where it
-    // was dragged to rather than springing back to the newest day.
+    // The grid follows every seek, as the timeline's does.
     private var day by mutableIntStateOf(0)
 
     private fun show() = compose.setContent {
@@ -142,11 +144,14 @@ class ScrubberHitAreaTest {
             moveBy(0, Offset(0f, 1500f))
         }
         // In a block of its own, so the thumb has been laid out where the drag left it
-        // and the marks have faded in before the second finger lands.
+        // and the marks have faded in before the second finger lands — on the newest
+        // year's mark, at the top of the rail and a long way above the thumb.
+        val mark = compose.onNodeWithText("2026").assertIsDisplayed().getBoundsInRoot()
+        val centre = with(compose.density) {
+            Offset((mark.left + mark.right).toPx() / 2, (mark.top + mark.bottom).toPx() / 2)
+        }
         compose.onNodeWithTag("grid").performTouchInput {
-            // The newest year's mark, against the right edge at the top, a long way
-            // above the thumb.
-            down(1, Offset(width - 20.dp.toPx(), 24.dp.toPx()))
+            down(1, centre)
             up(1)
         }
         compose.runOnIdle { assertEquals(1, taps) }

@@ -122,6 +122,7 @@ fun Scrubber(
                 // Against the edge of the screen, with nothing after them. A tick was
                 // pointing at the rail the year is already on, and the thumb passing over
                 // a year now and then costs less than a column of punctuation.
+                //
                 // A plain background rather than a Surface: a Surface blocks touches
                 // through it, and these are laid out over the photographs until the
                 // fade-out ends.
@@ -150,8 +151,7 @@ fun Scrubber(
         // The month under the thumb, drawn on its own rather than beside it: measured
         // against the rail's width it broke "December 2024" across two lines, and measured
         // unbounded inside a row it pushed the thumb off the screen. So it hangs to the
-        // left, from the same offset, and the rail stays narrow enough not to swallow taps
-        // meant for the photographs.
+        // left, from the same offset.
         AnimatedVisibility(
             visible = dragging,
             enter = fadeIn(),
