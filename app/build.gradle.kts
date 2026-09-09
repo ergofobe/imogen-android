@@ -172,4 +172,10 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    // Composables are laid out and hit-tested under Robolectric, without an emulator,
+    // for the one thing arithmetic cannot check: which sibling a touch lands on.
+    testImplementation(libs.androidx.test.ext.junit)
+    testImplementation(libs.compose.ui.test.junit4)
+    testImplementation(libs.robolectric)
+    debugImplementation(libs.compose.ui.test.manifest)
 }
