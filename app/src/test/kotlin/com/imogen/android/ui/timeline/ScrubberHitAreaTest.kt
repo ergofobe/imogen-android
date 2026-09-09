@@ -3,6 +3,9 @@ package com.imogen.android.ui.timeline
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -32,7 +35,7 @@ import org.robolectric.annotation.GraphicsMode
  * photographs underneath.
  */
 @RunWith(AndroidJUnit4::class)
-@Config(sdk = [35], qualifiers = "w411dp-h891dp-xxhdpi")
+@Config(qualifiers = "w411dp-h891dp-xxhdpi")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ScrubberHitAreaTest {
 
@@ -47,7 +50,10 @@ class ScrubberHitAreaTest {
 
     private var taps = 0
     private var scrubbing = false
-    private var seeks = 0
+    private val seeks = mutableListOf<Int>()
+    // The grid follows every seek, as the timeline's does, so the thumb stays where it
+    // was dragged to rather than springing back to the newest day.
+    private var day by mutableIntStateOf(0)
 
     private fun show() = compose.setContent {
         Box(Modifier.fillMaxSize()) {
@@ -59,9 +65,12 @@ class ScrubberHitAreaTest {
             )
             Scrubber(
                 layout = layout,
-                day = 0,
+                day = day,
                 onScrubbing = { scrubbing = it },
-                onSeek = { seeks++ },
+                onSeek = {
+                    seeks += it
+                    day = it
+                },
                 modifier = Modifier.align(Alignment.TopEnd),
             )
         }
@@ -86,7 +95,7 @@ class ScrubberHitAreaTest {
         }
         compose.runOnIdle {
             assertFalse(scrubbing)
-            assertEquals(0, seeks)
+            assertTrue(seeks.isEmpty())
         }
         compose.onNodeWithTag("grid").performTouchInput { up() }
     }
@@ -103,9 +112,44 @@ class ScrubberHitAreaTest {
         }
         compose.runOnIdle {
             assertTrue(scrubbing)
-            assertTrue(seeks > 0)
+            // Down the rail is back in time: a thumb that followed the finger has left
+            // the newest day, and one that stayed put would still report it.
+            assertTrue(seeks.last() > 0)
         }
         compose.onNodeWithTag("grid").performTouchInput { up() }
         compose.runOnIdle { assertFalse(scrubbing) }
+    }
+
+    @Test
+    fun `dragging past the end and back moves the thumb at once`() {
+        show()
+        compose.onNodeWithTag("grid").performTouchInput {
+            down(Offset(width - 22.dp.toPx(), 24.dp.toPx()))
+            // Well past the bottom of the rail, then a little way back up.
+            moveBy(Offset(0f, height * 2f))
+        }
+        val bottom = compose.runOnIdle { seeks.last() }
+        compose.onNodeWithTag("grid").performTouchInput { moveBy(Offset(0f, -height / 4f)) }
+        compose.runOnIdle { assertTrue(seeks.last() < bottom) }
+        compose.onNodeWithTag("grid").performTouchInput { up() }
+    }
+
+    @Test
+    fun `the year marks do not take a tap while they are shown`() {
+        show()
+        compose.onNodeWithTag("grid").performTouchInput {
+            down(0, Offset(width - 22.dp.toPx(), 24.dp.toPx()))
+            moveBy(0, Offset(0f, 1500f))
+        }
+        // In a block of its own, so the thumb has been laid out where the drag left it
+        // and the marks have faded in before the second finger lands.
+        compose.onNodeWithTag("grid").performTouchInput {
+            // The newest year's mark, against the right edge at the top, a long way
+            // above the thumb.
+            down(1, Offset(width - 20.dp.toPx(), 24.dp.toPx()))
+            up(1)
+        }
+        compose.runOnIdle { assertEquals(1, taps) }
+        compose.onNodeWithTag("grid").performTouchInput { up(0) }
     }
 }

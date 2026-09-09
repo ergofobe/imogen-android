@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -79,13 +80,14 @@ fun Scrubber(
     val density = LocalDensity.current
     val haptics = LocalHapticFeedback.current
 
-    // Read by the gesture, which outlives any one composition.
-    val currentDay by rememberUpdatedState(day)
-
     val fraction = if (dragging) dragFraction else layout.fractionOfDay(day)
     // Animated only at rest: following a finger through a spring lags behind it.
     val settled by animateFloatAsState(fraction, label = "scrubber")
     val position = if (dragging) fraction else settled
+
+    // Read by the gesture, which outlives any one composition.
+    val currentDay by rememberUpdatedState(day)
+    val currentPosition by rememberUpdatedState(position)
 
     val thumbHeight = 48.dp
     val thumbPx = with(density) { thumbHeight.toPx() }
@@ -120,14 +122,19 @@ fun Scrubber(
                 // Against the edge of the screen, with nothing after them. A tick was
                 // pointing at the rail the year is already on, and the thumb passing over
                 // a year now and then costs less than a column of punctuation.
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                // A plain background rather than a Surface: a Surface blocks touches
+                // through it, and these are laid out over the photographs until the
+                // fade-out ends.
+                Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(end = 8.dp)
                         .offset(y = trackDp * mark.fraction + thumbHeight / 2 - 10.dp)
-                        .graphicsLayer { alpha = railAlpha },
+                        .graphicsLayer { alpha = railAlpha }
+                        .background(
+                            MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                            RoundedCornerShape(50),
+                        ),
                 ) {
                     Text(
                         mark.year.toString(),
@@ -155,10 +162,8 @@ fun Scrubber(
                 .padding(end = 46.dp)
                 .wrapContentWidth(align = Alignment.End, unbounded = true),
         ) {
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = MaterialTheme.colorScheme.primary,
-                tonalElevation = 6.dp,
+            Box(
+                Modifier.background(MaterialTheme.colorScheme.primary, RoundedCornerShape(50)),
             ) {
                 Text(
                     monthLabel(layout.index.buckets[dragDay].date),
@@ -179,7 +184,9 @@ fun Scrubber(
         // sibling, so the touch either lands on it or falls through to a photograph.
         //
         // The drag is followed by its deltas rather than its position: this box moves with
-        // the thumb, so a position in its own coordinates would chase itself.
+        // the thumb, so a position in its own coordinates would chase itself. Stepping the
+        // fraction directly, clamped, means a finger that ran off the end of the rail turns
+        // the thumb round the moment it comes back.
         Box(
             modifier = Modifier
                 .align(Alignment.TopEnd)
@@ -189,10 +196,8 @@ fun Scrubber(
                     contentDescription = "Scroll through time"
                 }
                 .pointerInput(layout) {
-                    var dragY = 0f
-
-                    fun seekTo(y: Float) {
-                        dragFraction = ((y - thumbPx / 2) / trackHeight).coerceIn(0f, 1f)
+                    fun seekTo(fraction: Float) {
+                        dragFraction = fraction.coerceIn(0f, 1f)
                         val landing = layout.dayAtFraction(dragFraction)
                         if (landing != dragDay) {
                             // One tick per day crossed would buzz continuously across a
@@ -214,10 +219,10 @@ fun Scrubber(
                             haptics.performHapticFeedback(
                                 HapticFeedbackType.GestureThresholdActivate,
                             )
-                            // Taken hold of where it is, not snapped under the finger.
-                            dragDay = currentDay
-                            dragFraction = layout.fractionOfDay(currentDay)
-                            dragY = dragFraction * trackHeight + thumbPx / 2
+                            // Taken hold of where it is drawn — which mid-spring is not yet
+                            // where the grid is — rather than snapped under the finger.
+                            dragDay = currentDay.coerceIn(0, layout.index.buckets.lastIndex)
+                            dragFraction = currentPosition
                         },
                         onDragEnd = {
                             dragging = false
@@ -232,8 +237,7 @@ fun Scrubber(
                         },
                     ) { change, amount ->
                         change.consume()
-                        dragY += amount
-                        seekTo(dragY)
+                        seekTo(dragFraction + amount / trackHeight)
                     }
                 },
             contentAlignment = Alignment.CenterEnd,
