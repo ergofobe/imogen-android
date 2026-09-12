@@ -1,22 +1,17 @@
 package com.imogen.android.backup
 
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.content.Context
-import android.content.pm.ServiceInfo
-import android.os.Build
-import androidx.core.app.NotificationCompat
+import android.util.Log
 import androidx.work.CoroutineWorker
-import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.imogen.android.ImogenApplication
-import com.imogen.android.R
 import com.imogen.android.data.Account
 import com.imogen.android.data.Session
 import com.imogen.sdk.AssetUploadMetadata
 import com.imogen.sdk.ImogenException
 import com.imogen.sdk.UploadOptions
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -37,10 +32,25 @@ class BackupWorker(
     parameters: WorkerParameters,
 ) : CoroutineWorker(context, parameters) {
 
-    override suspend fun doWork(): Result {
+    override suspend fun doWork(): Result = try {
+        pass()
+    } catch (cancelled: CancellationException) {
+        // Being stopped is not a verdict. WorkManager is bringing the pass back.
+        throw cancelled
+    } catch (error: Exception) {
+        // Anything the pass did not expect — a database that will not open, a scan that
+        // ran out of memory. Without this the worker dies, the screen says the backup
+        // could not finish, and the shade says nothing at all. Logged rather than only
+        // shown: "it could not finish" is what somebody reports, and the throwable is
+        // the only thing that says why.
+        Log.e(TAG, "backup pass failed", error)
+        finish(Result.failure(), PassNotice.Failed(FailureReason.Unknown, emptyList()))
+    }
+
+    private suspend fun pass(): Result {
         val app = applicationContext as ImogenApplication
         val preferences = app.backupSettings.current()
-        if (!preferences.enabled) return Result.success()
+        if (!preferences.enabled) return finish(Result.success())
 
         val book = app.accountStore.current()
         val ledger = BackupLedger.get(applicationContext).uploads()
@@ -53,7 +63,7 @@ class BackupWorker(
         }
 
         val destinations = book.backingUpTo
-        if (destinations.isEmpty()) return Result.success()
+        if (destinations.isEmpty()) return finish(Result.success())
 
         // Before the scan, because MediaStore answers a query it will not serve with an
         // empty cursor and no error at all. Without this the pass reads nothing, reports
@@ -62,7 +72,10 @@ class BackupWorker(
         if (MediaPermission.check(applicationContext, preferences.includeVideos) ==
             MediaAccess.Denied
         ) {
-            return Result.failure(workDataOf(RESULT_REASON to REASON_MEDIA_ACCESS))
+            return finish(
+                Result.failure(workDataOf(RESULT_REASON to REASON_MEDIA_ACCESS)),
+                PassNotice.Failed(FailureReason.MediaAccess, emptyList()),
+            )
         }
 
         // Said before the scan rather than after it: reading several thousand MediaStore
@@ -76,7 +89,7 @@ class BackupWorker(
                 cameraOnly = preferences.cameraOnly,
             )
         }
-        if (media.isEmpty()) return Result.success()
+        if (media.isEmpty()) return finish(Result.success())
 
         // Oldest first. A backup that starts today and works backwards leaves somebody
         // watching the count go up with no idea whether it will ever reach the bottom.
@@ -99,12 +112,21 @@ class BackupWorker(
                 destinations.map { it.backupKey },
                 System.currentTimeMillis(),
             )
-            return Result.success()
+            return finish(Result.success())
         }
 
         val ids = destinations.map { it.backupKey }
+        // Who we are on each server, where the address alone would name two of them.
+        val labels = distinctLabels(
+            destinations.map { it.serverLabel },
+            destinations.map { it.email },
+        )
         val totals = ids.map { outstanding.getValue(it).size }.toIntArray()
         val perAccount = IntArray(ids.size)
+        // What was actually sent, as against what the bar counts as dealt with. A file
+        // the server refused is settled but it is not backed up, and only one of those
+        // two is a thing to tell somebody at the end of a pass.
+        val uploaded = IntArray(ids.size)
 
         var completed = 0
         var retryable = false
@@ -127,13 +149,14 @@ class BackupWorker(
                         PROGRESS_ACCOUNT to account.backupKey,
                     ),
                 )
-                setForegroundSafely(completed, total)
+                setForegroundSafely(rowsOf(labels, totals, perAccount))
 
                 val slot = ids.indexOf(account.backupKey)
                 when (upload(app.sessions.sessionFor(account), item, account)) {
                     UploadOutcome.Uploaded -> {
                         completed += 1
                         perAccount[slot] += 1
+                        uploaded[slot] += 1
                     }
                     // Counted as dealt with, because it will not be tried again. Leaving
                     // it out would strand the bar one short of its total for ever.
@@ -164,10 +187,19 @@ class BackupWorker(
 
         // Failure rather than retry: backing off would only repeat the refusal on a timer,
         // and silently. This is the one outcome that waiting cannot mend.
+        val sent = rowsOf(labels, totals, uploaded)
         if (signedOut.isNotEmpty()) {
-            return Result.failure(workDataOf(RESULT_REASON to REASON_SIGNED_OUT))
+            return finish(
+                Result.failure(workDataOf(RESULT_REASON to REASON_SIGNED_OUT)),
+                PassNotice.Failed(
+                    FailureReason.SignedOut,
+                    ids.indices.filter { ids[it] in signedOut }.map { labels[it] },
+                    sent,
+                ),
+            )
         }
-        return Result.success()
+
+        return finish(Result.success(), finishedNotice(sent))
     }
 
     private suspend fun upload(
@@ -267,37 +299,29 @@ class BackupWorker(
         target
     }
 
-    private suspend fun setForegroundSafely(completed: Int, total: Int) {
+    /**
+     * Every way a pass can end goes through here, so the shade is never left holding the
+     * last pass's verdict — "signed out of family.example.org" outliving the sign-in that
+     * put it right was the whole of that bug. A retry is not an ending and does not.
+     */
+    private fun finish(result: Result, notice: PassNotice? = null): Result {
+        BackupNotifications.settle(applicationContext, notice)
+        return result
+    }
+
+    private fun rowsOf(
+        labels: List<String>,
+        totals: IntArray,
+        counted: IntArray,
+    ): List<DestinationProgress> = labels.mapIndexed { slot, label ->
+        DestinationProgress(label, counted[slot], totals[slot])
+    }
+
+    private suspend fun setForegroundSafely(destinations: List<DestinationProgress>) {
         // Foreground promotion is refused in more situations with every release, and a
         // refusal must not take the upload down with it — the work is still worth doing
         // quietly.
-        runCatching { setForeground(notification(completed, total)) }
-    }
-
-    private fun notification(completed: Int, total: Int): ForegroundInfo {
-        applicationContext.getSystemService(NotificationManager::class.java)
-            .createNotificationChannel(
-                NotificationChannel(
-                    CHANNEL,
-                    applicationContext.getString(R.string.backup_channel),
-                    NotificationManager.IMPORTANCE_LOW,
-                ),
-            )
-
-        val notification = NotificationCompat.Builder(applicationContext, CHANNEL)
-            .setContentTitle(applicationContext.getString(R.string.backup_running))
-            .setContentText("$completed / $total")
-            .setSmallIcon(android.R.drawable.stat_sys_upload)
-            .setOngoing(true)
-            .setProgress(total, completed, false)
-            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_DEFERRED)
-            .build()
-
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ForegroundInfo(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            ForegroundInfo(NOTIFICATION_ID, notification)
-        }
+        runCatching { setForeground(BackupNotifications.foreground(applicationContext, destinations)) }
     }
 
     companion object {
@@ -319,7 +343,6 @@ class BackupWorker(
         const val REASON_MEDIA_ACCESS = "media-access"
         const val REASON_SIGNED_OUT = "signed-out"
 
-        private const val CHANNEL = "backup"
-        private const val NOTIFICATION_ID = 4201
+        private const val TAG = "BackupWorker"
     }
 }

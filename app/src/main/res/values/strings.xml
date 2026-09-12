@@ -3,4 +3,5 @@
     <string name="app_name">imogen</string>
     <string name="backup_channel">Photo backup</string>
     <string name="backup_running">Backing up photos</string>
+    <string name="backup_result_channel">Backup results</string>
 </resources>
