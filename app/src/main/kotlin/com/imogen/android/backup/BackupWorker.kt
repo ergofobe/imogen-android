@@ -1,6 +1,7 @@
 package com.imogen.android.backup
 
 import android.content.Context
+import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
@@ -39,7 +40,10 @@ class BackupWorker(
     } catch (error: Exception) {
         // Anything the pass did not expect — a database that will not open, a scan that
         // ran out of memory. Without this the worker dies, the screen says the backup
-        // could not finish, and the shade says nothing at all.
+        // could not finish, and the shade says nothing at all. Logged rather than only
+        // shown: "it could not finish" is what somebody reports, and the throwable is
+        // the only thing that says why.
+        Log.e(TAG, "backup pass failed", error)
         finish(Result.failure(), PassNotice.Failed(FailureReason.Unknown, emptyList()))
     }
 
@@ -333,5 +337,7 @@ class BackupWorker(
         const val RESULT_REASON = "reason"
         const val REASON_MEDIA_ACCESS = "media-access"
         const val REASON_SIGNED_OUT = "signed-out"
+
+        private const val TAG = "BackupWorker"
     }
 }

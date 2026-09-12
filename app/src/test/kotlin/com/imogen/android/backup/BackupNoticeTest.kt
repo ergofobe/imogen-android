@@ -94,7 +94,11 @@ class BackupNoticeTest {
             listOf(to("photos.example.com", 400), to("family.example.org", 0)),
         )
 
-        assertEquals("photos.example.com · 400 backed up", noticeDetail(notice))
+        val detail = noticeDetail(notice)!!
+        // Expanding must not lose the half that needs acting on: `bigText` replaces the
+        // collapsed line, it does not follow it.
+        assertTrue(detail.startsWith(noticeText(notice)))
+        assertTrue(detail.endsWith("photos.example.com · 400 backed up"))
     }
 
     @Test

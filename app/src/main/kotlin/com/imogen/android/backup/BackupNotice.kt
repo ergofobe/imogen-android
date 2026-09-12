@@ -69,10 +69,15 @@ fun noticeDetail(notice: PassNotice): String? = when (notice) {
         .takeIf { it.size > 1 }
         ?.joinToString("\n") { "${it.label} · ${it.completed} backed up" }
 
+    // The failure leads, because `bigText` replaces the collapsed line rather than
+    // adding to it: without this, expanding a notice about being signed out shows only
+    // the photographs that did get through and no sign that anything needs doing.
     is PassNotice.Failed -> notice.sent
         .filter { it.completed > 0 }
         .takeIf { it.isNotEmpty() }
-        ?.joinToString("\n") { "${it.label} · ${it.completed} backed up" }
+        ?.joinToString("\n", prefix = "${noticeText(notice)}\n\n") {
+            "${it.label} · ${it.completed} backed up"
+        }
 }
 
 private fun finishedText(destinations: List<DestinationProgress>): String {
