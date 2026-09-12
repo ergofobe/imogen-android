@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
+import com.imogen.android.backup.BackupNotifications
 import com.imogen.android.data.Account
 import com.imogen.android.data.Session
 import com.imogen.android.ui.albums.AlbumsScreen
@@ -73,12 +74,19 @@ fun ImogenApp(
     onDeepLinkHandled: () -> Unit,
 ) {
     val book by model.book.collectAsStateWithLifecycle()
+    // Held rather than acted on: a notification tapped from cold arrives before the
+    // account book has loaded, and there is nothing to put the backup screen on top of
+    // until it has.
+    var openBackup by remember { mutableStateOf(false) }
 
     // A pairing link can arrive at any moment, including while somebody is looking at a
     // photograph. It is handled at the top so it works from wherever they were.
     LaunchedEffect(deepLink) {
         val url = deepLink ?: return@LaunchedEffect
-        model.consumeDeepLink(url)
+        when (targetOf(url)) {
+            LinkTarget.Backup -> openBackup = true
+            LinkTarget.Accounts -> model.consumeDeepLink(url)
+        }
         onDeepLinkHandled()
     }
 
@@ -96,7 +104,12 @@ fun ImogenApp(
         return
     }
 
-    Library(model = model, account = active)
+    Library(
+        model = model,
+        account = active,
+        openBackup = openBackup,
+        onBackupOpened = { openBackup = false },
+    )
 }
 
 private enum class Destination(val label: String, val icon: ImageVector) {
@@ -143,11 +156,25 @@ private sealed interface Overlay {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun Library(model: RootViewModel, account: Account) {
+private fun Library(
+    model: RootViewModel,
+    account: Account,
+    openBackup: Boolean,
+    onBackupOpened: () -> Unit,
+) {
     val session: Session = remember(account.id) { model.sessionFor(account) }
     var destination by remember { mutableStateOf(Destination.Photos) }
     var overlay by remember(account.id) { mutableStateOf<Overlay>(Overlay.None) }
     val snackbar = remember { SnackbarHostState() }
+
+    // The tab moves with the overlay, so backing out of the backup screen lands on the
+    // settings it belongs to rather than on whatever was in front before.
+    LaunchedEffect(openBackup) {
+        if (!openBackup) return@LaunchedEffect
+        destination = Destination.Settings
+        overlay = Overlay.Backup
+        onBackupOpened()
+    }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val widthDp = maxWidth.value.toInt()
@@ -685,3 +712,15 @@ private fun FailedUploadsPane(model: RootViewModel, contentPadding: PaddingValue
         },
     )
 }
+
+/** Where a link the operating system handed the app belongs. */
+enum class LinkTarget {
+    /** The backup screen — what the backup notification is tapped for. */
+    Backup,
+
+    /** Pairing or the OAuth callback, or nothing at all: [RootViewModel] decides which. */
+    Accounts,
+}
+
+fun targetOf(url: String): LinkTarget =
+    if (url.startsWith(BackupNotifications.DEEP_LINK)) LinkTarget.Backup else LinkTarget.Accounts

@@ -1,17 +1,10 @@
 package com.imogen.android.backup
 
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.content.Context
-import android.content.pm.ServiceInfo
-import android.os.Build
-import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
-import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.imogen.android.ImogenApplication
-import com.imogen.android.R
 import com.imogen.android.data.Account
 import com.imogen.android.data.Session
 import com.imogen.sdk.AssetUploadMetadata
@@ -62,6 +55,10 @@ class BackupWorker(
         if (MediaPermission.check(applicationContext, preferences.includeVideos) ==
             MediaAccess.Denied
         ) {
+            BackupNotifications.post(
+                applicationContext,
+                PassNotice.Failed(FailureReason.MediaAccess, emptyList()),
+            )
             return Result.failure(workDataOf(RESULT_REASON to REASON_MEDIA_ACCESS))
         }
 
@@ -105,6 +102,7 @@ class BackupWorker(
         val ids = destinations.map { it.backupKey }
         val totals = ids.map { outstanding.getValue(it).size }.toIntArray()
         val perAccount = IntArray(ids.size)
+        BackupNotifications.clearResult(applicationContext)
 
         var completed = 0
         var retryable = false
@@ -127,7 +125,7 @@ class BackupWorker(
                         PROGRESS_ACCOUNT to account.backupKey,
                     ),
                 )
-                setForegroundSafely(completed, total)
+                setForegroundSafely(rowsOf(destinations, totals, perAccount))
 
                 val slot = ids.indexOf(account.backupKey)
                 when (upload(app.sessions.sessionFor(account), item, account)) {
@@ -165,8 +163,18 @@ class BackupWorker(
         // Failure rather than retry: backing off would only repeat the refusal on a timer,
         // and silently. This is the one outcome that waiting cannot mend.
         if (signedOut.isNotEmpty()) {
+            BackupNotifications.post(
+                applicationContext,
+                PassNotice.Failed(
+                    FailureReason.SignedOut,
+                    destinations.filter { it.backupKey in signedOut }.map { it.serverLabel },
+                ),
+            )
             return Result.failure(workDataOf(RESULT_REASON to REASON_SIGNED_OUT))
         }
+
+        finishedNotice(rowsOf(destinations, totals, perAccount))
+            ?.let { BackupNotifications.post(applicationContext, it) }
         return Result.success()
     }
 
@@ -267,37 +275,19 @@ class BackupWorker(
         target
     }
 
-    private suspend fun setForegroundSafely(completed: Int, total: Int) {
+    private fun rowsOf(
+        destinations: List<Account>,
+        totals: IntArray,
+        perAccount: IntArray,
+    ): List<DestinationProgress> = destinations.mapIndexed { slot, account ->
+        DestinationProgress(account.serverLabel, perAccount[slot], totals[slot])
+    }
+
+    private suspend fun setForegroundSafely(destinations: List<DestinationProgress>) {
         // Foreground promotion is refused in more situations with every release, and a
         // refusal must not take the upload down with it — the work is still worth doing
         // quietly.
-        runCatching { setForeground(notification(completed, total)) }
-    }
-
-    private fun notification(completed: Int, total: Int): ForegroundInfo {
-        applicationContext.getSystemService(NotificationManager::class.java)
-            .createNotificationChannel(
-                NotificationChannel(
-                    CHANNEL,
-                    applicationContext.getString(R.string.backup_channel),
-                    NotificationManager.IMPORTANCE_LOW,
-                ),
-            )
-
-        val notification = NotificationCompat.Builder(applicationContext, CHANNEL)
-            .setContentTitle(applicationContext.getString(R.string.backup_running))
-            .setContentText("$completed / $total")
-            .setSmallIcon(android.R.drawable.stat_sys_upload)
-            .setOngoing(true)
-            .setProgress(total, completed, false)
-            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_DEFERRED)
-            .build()
-
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ForegroundInfo(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            ForegroundInfo(NOTIFICATION_ID, notification)
-        }
+        runCatching { setForeground(BackupNotifications.foreground(applicationContext, destinations)) }
     }
 
     companion object {
@@ -318,8 +308,5 @@ class BackupWorker(
         const val RESULT_REASON = "reason"
         const val REASON_MEDIA_ACCESS = "media-access"
         const val REASON_SIGNED_OUT = "signed-out"
-
-        private const val CHANNEL = "backup"
-        private const val NOTIFICATION_ID = 4201
     }
 }
