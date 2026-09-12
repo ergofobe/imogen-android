@@ -37,6 +37,10 @@ class BackupNotificationTest {
     private val finished =
         finishedNotice(listOf(DestinationProgress("photos.example.com", 484, 484)))!!
 
+    private fun showing() = shadowOf(manager).activeNotifications
+        .single { it.id == BackupNotifications.RESULT_ID }
+        .notification
+
     @Before
     fun allowNotifications() {
         shadowOf(context as Application).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
@@ -78,8 +82,6 @@ class BackupNotificationTest {
 
         assertEquals(0, notification.flags and Notification.FLAG_ONGOING_EVENT)
         assertNotEquals(0, notification.flags and Notification.FLAG_AUTO_CANCEL)
-        // A pass that keeps failing posts the same verdict every six hours. Said once.
-        assertNotEquals(0, notification.flags and Notification.FLAG_ONLY_ALERT_ONCE)
         assertNotNull(notification.contentIntent)
         assertTrue(notification.extras.getString(Notification.EXTRA_TEXT).orEmpty().contains("484"))
     }
@@ -124,6 +126,49 @@ class BackupNotificationTest {
         BackupNotifications.settle(context, null)
 
         assertEquals(emptyList<Int>(), shadowOf(manager).activeNotifications.map { it.id })
+    }
+
+    @Test
+    fun `the same verdict over again does not alert twice`() {
+        val stopped = PassNotice.Failed(FailureReason.MediaAccess, emptyList())
+        BackupNotifications.settle(context, stopped)
+
+        BackupNotifications.settle(context, stopped)
+
+        assertNotEquals(0, showing().flags and Notification.FLAG_ONLY_ALERT_ONCE)
+    }
+
+    @Test
+    fun `a verdict that replaces a different one alerts`() {
+        BackupNotifications.settle(context, finished)
+
+        BackupNotifications.settle(
+            context,
+            PassNotice.Failed(FailureReason.SignedOut, listOf("family.example.org")),
+        )
+
+        // The whole point of the result channel: the verdict that needs acting on must
+        // not arrive silently just because something else was already in the shade.
+        assertEquals(0, showing().flags and Notification.FLAG_ONLY_ALERT_ONCE)
+    }
+
+    @Test
+    fun `the first verdict of all alerts`() {
+        BackupNotifications.settle(context, finished)
+
+        assertEquals(0, showing().flags and Notification.FLAG_ONLY_ALERT_ONCE)
+    }
+
+    @Test
+    fun `a failure with nothing to add can still be read in full`() {
+        val stopped = PassNotice.Failed(FailureReason.SignedOut, listOf("family.example.org"))
+
+        val notification = BackupNotifications.result(context, stopped)
+
+        assertEquals(
+            noticeText(stopped),
+            notification.extras.getString(Notification.EXTRA_BIG_TEXT),
+        )
     }
 
     /** `POST_NOTIFICATIONS` is optional, and a pass that cannot say so still ran. */

@@ -116,6 +116,11 @@ class BackupWorker(
         }
 
         val ids = destinations.map { it.backupKey }
+        // Who we are on each server, where the address alone would name two of them.
+        val labels = distinctLabels(
+            destinations.map { it.serverLabel },
+            destinations.map { it.email },
+        )
         val totals = ids.map { outstanding.getValue(it).size }.toIntArray()
         val perAccount = IntArray(ids.size)
         // What was actually sent, as against what the bar counts as dealt with. A file
@@ -144,7 +149,7 @@ class BackupWorker(
                         PROGRESS_ACCOUNT to account.backupKey,
                     ),
                 )
-                setForegroundSafely(rowsOf(destinations, totals, perAccount))
+                setForegroundSafely(rowsOf(labels, totals, perAccount))
 
                 val slot = ids.indexOf(account.backupKey)
                 when (upload(app.sessions.sessionFor(account), item, account)) {
@@ -182,13 +187,13 @@ class BackupWorker(
 
         // Failure rather than retry: backing off would only repeat the refusal on a timer,
         // and silently. This is the one outcome that waiting cannot mend.
-        val sent = rowsOf(destinations, totals, uploaded)
+        val sent = rowsOf(labels, totals, uploaded)
         if (signedOut.isNotEmpty()) {
             return finish(
                 Result.failure(workDataOf(RESULT_REASON to REASON_SIGNED_OUT)),
                 PassNotice.Failed(
                     FailureReason.SignedOut,
-                    destinations.filter { it.backupKey in signedOut }.map { it.serverLabel },
+                    ids.indices.filter { ids[it] in signedOut }.map { labels[it] },
                     sent,
                 ),
             )
@@ -305,11 +310,11 @@ class BackupWorker(
     }
 
     private fun rowsOf(
-        destinations: List<Account>,
+        labels: List<String>,
         totals: IntArray,
-        perAccount: IntArray,
-    ): List<DestinationProgress> = destinations.mapIndexed { slot, account ->
-        DestinationProgress(account.serverLabel, perAccount[slot], totals[slot])
+        counted: IntArray,
+    ): List<DestinationProgress> = labels.mapIndexed { slot, label ->
+        DestinationProgress(label, counted[slot], totals[slot])
     }
 
     private suspend fun setForegroundSafely(destinations: List<DestinationProgress>) {

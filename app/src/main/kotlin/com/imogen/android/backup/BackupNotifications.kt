@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -37,6 +38,8 @@ object BackupNotifications {
     const val PROGRESS_ID = 4201
     const val RESULT_ID = 4202
 
+    private const val EXTRA_VERDICT = "com.imogen.android.backup.verdict"
+
     fun foreground(context: Context, destinations: List<DestinationProgress>): ForegroundInfo {
         val notification = progress(context, destinations)
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -60,28 +63,48 @@ object BackupNotifications {
             .build()
     }
 
+    /**
+     * The rule for whether this makes a sound is one sentence: a verdict that differs
+     * from the one already in the shade alerts, and only a repeat of what is showing
+     * stays quiet.
+     *
+     * `setOnlyAlertOnce` does not say that on its own — the platform applies it to *any*
+     * update of an already-posted id, so a "Backup finished" left from last night would
+     * silently become this morning's "Backup stopped", and the one verdict that needs
+     * acting on would be the only one that never alerted. What is showing is therefore
+     * read back rather than assumed, and each notification carries the verdict it stands
+     * for so the next pass can tell.
+     */
     fun result(context: Context, notice: PassNotice): Notification {
         createChannels(context)
+        val verdict = verdictKey(notice)
         return builder(context, RESULT_CHANNEL)
             .setContentTitle(noticeTitle(notice))
             .setContentText(noticeText(notice))
             .setSmallIcon(iconFor(notice))
             .setAutoCancel(true)
-            // A pass that cannot run keeps failing every six hours, and the same verdict
-            // arriving with a sound four times a day is the nuisance this whole change is
-            // trying not to become. Said once, then updated in place.
-            .setOnlyAlertOnce(true)
-            .withDetail(noticeDetail(notice))
+            .setOnlyAlertOnce(verdict == showingVerdict(context))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(noticeDetail(notice)))
+            .addExtras(Bundle().apply { putString(EXTRA_VERDICT, verdict) })
             .build()
     }
+
+    /** The verdict the shade is holding, or null — dismissed counts as nothing showing. */
+    private fun showingVerdict(context: Context): String? =
+        context.getSystemService(NotificationManager::class.java)
+            .activeNotifications
+            .firstOrNull { it.id == RESULT_ID }
+            ?.notification
+            ?.extras
+            ?.getString(EXTRA_VERDICT)
 
     /**
      * What the shade is left holding when a pass ends: this verdict, or nothing.
      *
-     * One call rather than a cancel and a post, because a pass that keeps failing every
-     * six hours posts the same verdict every six hours — and cancelling first would make
-     * each one a new notification, which is exactly what `setOnlyAlertOnce` is there to
-     * stop. Updating the record in place is what keeps it silent after the first.
+     * One call rather than a cancel and a post. Cancelling first would take the standing
+     * verdict — and with it the record of what the shade already says — out from under
+     * [result], which reads it to decide whether this is news. A pass that fails every
+     * six hours would then announce itself every six hours.
      *
      * The progress notification goes either way. That covers the case WorkManager does
      * not: a pass whose foreground promotion was refused owns 4201 itself.

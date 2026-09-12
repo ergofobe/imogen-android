@@ -2,6 +2,7 @@ package com.imogen.android.backup
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -56,7 +57,7 @@ class BackupNoticeTest {
 
         assertEquals("Backup finished", noticeTitle(notice))
         assertEquals("photos.example.com · 484 backed up", noticeText(notice))
-        assertNull(noticeDetail(notice))
+        assertEquals(noticeText(notice), noticeDetail(notice))
     }
 
     @Test
@@ -94,7 +95,7 @@ class BackupNoticeTest {
             listOf(to("photos.example.com", 400), to("family.example.org", 0)),
         )
 
-        val detail = noticeDetail(notice)!!
+        val detail = noticeDetail(notice)
         // Expanding must not lose the half that needs acting on: `bigText` replaces the
         // collapsed line, it does not follow it.
         assertTrue(detail.startsWith(noticeText(notice)))
@@ -106,7 +107,54 @@ class BackupNoticeTest {
         val notice = PassNotice.Failed(FailureReason.MediaAccess, emptyList())
 
         assertTrue(noticeText(notice).contains("photographs"))
-        assertNull(noticeDetail(notice))
+        // The collapsed line truncates at about thirty-five characters, so a failure with
+        // nothing to add still needs somewhere its own sentence can be read in full.
+        assertEquals(noticeText(notice), noticeDetail(notice))
+    }
+
+    @Test
+    fun `the same verdict twice over is the same verdict`() {
+        val signedOut = PassNotice.Failed(FailureReason.SignedOut, listOf("family.example.org"))
+
+        assertEquals(verdictKey(signedOut), verdictKey(signedOut.copy(sent = listOf(to("a", 3)))))
+        assertEquals(
+            verdictKey(finishedNotice(listOf(to("photos.example.com", 484)))!!),
+            verdictKey(finishedNotice(listOf(to("photos.example.com", 490)))!!),
+        )
+    }
+
+    @Test
+    fun `finishing and failing are not`() {
+        assertNotEquals(
+            verdictKey(finishedNotice(listOf(to("photos.example.com", 484)))!!),
+            verdictKey(PassNotice.Failed(FailureReason.SignedOut, listOf("photos.example.com"))),
+        )
+        assertNotEquals(
+            verdictKey(PassNotice.Failed(FailureReason.SignedOut, listOf("photos.example.com"))),
+            verdictKey(PassNotice.Failed(FailureReason.SignedOut, listOf("family.example.org"))),
+        )
+    }
+
+    @Test
+    fun `two accounts on one server are told apart`() {
+        assertEquals(
+            listOf("photos.example.com · jim@example.org", "photos.example.com · ada@example.org"),
+            distinctLabels(
+                listOf("photos.example.com", "photos.example.com"),
+                listOf("jim@example.org", "ada@example.org"),
+            ),
+        )
+    }
+
+    @Test
+    fun `an unambiguous address is left alone`() {
+        assertEquals(
+            listOf("photos.example.com", "family.example.org"),
+            distinctLabels(
+                listOf("photos.example.com", "family.example.org"),
+                listOf("jim@example.org", "jim@example.org"),
+            ),
+        )
     }
 
     @Test
