@@ -23,10 +23,14 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.PlayCircleFilled
 import androidx.compose.material.icons.outlined.Circle
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -83,6 +87,7 @@ import kotlinx.coroutines.launch
  * That is what makes the scrubber honest. A grid that grows as pages arrive has a
  * scrollbar that means something different every second.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TimelineScreen(
     session: Session,
@@ -98,6 +103,7 @@ fun TimelineScreen(
 ) {
     val state by model.state.collectAsStateWithLifecycle()
     val grid = rememberLazyGridState()
+    val pull = rememberPullToRefreshState()
     val scope = rememberCoroutineScope()
 
     // Keyed on the model. This composable is re-invoked in the same slot with a different
@@ -223,10 +229,25 @@ fun TimelineScreen(
             }
     }
 
-    Box(
-        modifier
+    // Photographs arrive from elsewhere and nothing tells the app so. This is the gesture
+    // somebody who already knows reaches for, and it reloads in place — see
+    // [TimelineViewModel.reload], which is why the grid under the finger keeps its cells.
+    PullToRefreshBox(
+        isRefreshing = state.refreshing,
+        onRefresh = model::reload,
+        state = pull,
+        modifier = modifier
             .fillMaxSize()
             .onSizeChanged { viewport = it },
+        indicator = {
+            PullToRefreshDefaults.Indicator(
+                state = pull,
+                isRefreshing = state.refreshing,
+                // Under the top bar is where the default would put it, which on this
+                // screen is behind it. The grid is inset by the same padding.
+                modifier = Modifier.align(Alignment.TopCenter).padding(contentPadding),
+            )
+        },
     ) {
         LazyVerticalGrid(
             columns = GridCells.Fixed(columns),
