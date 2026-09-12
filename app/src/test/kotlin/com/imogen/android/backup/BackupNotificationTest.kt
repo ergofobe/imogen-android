@@ -78,6 +78,8 @@ class BackupNotificationTest {
 
         assertEquals(0, notification.flags and Notification.FLAG_ONGOING_EVENT)
         assertNotEquals(0, notification.flags and Notification.FLAG_AUTO_CANCEL)
+        // A pass that keeps failing posts the same verdict every six hours. Said once.
+        assertNotEquals(0, notification.flags and Notification.FLAG_ONLY_ALERT_ONCE)
         assertNotNull(notification.contentIntent)
         assertTrue(notification.extras.getString(Notification.EXTRA_TEXT).orEmpty().contains("484"))
     }
@@ -109,17 +111,17 @@ class BackupNotificationTest {
             BackupNotifications.progress(context, oneDestination),
         )
 
-        BackupNotifications.post(context, finished)
+        BackupNotifications.settle(context, finished)
 
         val shown = shadowOf(manager).activeNotifications.map { it.id }
         assertEquals(listOf(BackupNotifications.RESULT_ID), shown)
     }
 
     @Test
-    fun `a pass starting clears the last one's result`() {
-        BackupNotifications.post(context, finished)
+    fun `a pass with nothing to say takes the last one's result down`() {
+        BackupNotifications.settle(context, finished)
 
-        BackupNotifications.clearResult(context)
+        BackupNotifications.settle(context, null)
 
         assertEquals(emptyList<Int>(), shadowOf(manager).activeNotifications.map { it.id })
     }
@@ -129,7 +131,7 @@ class BackupNotificationTest {
     fun `a phone that refused notifications gets none, and no exception`() {
         shadowOf(context as Application).denyPermissions(Manifest.permission.POST_NOTIFICATIONS)
 
-        BackupNotifications.post(context, finished)
+        BackupNotifications.settle(context, finished)
 
         assertEquals(emptyList<Int>(), shadowOf(manager).activeNotifications.map { it.id })
     }

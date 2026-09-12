@@ -10,6 +10,7 @@ import com.imogen.android.data.Session
 import com.imogen.sdk.AssetUploadMetadata
 import com.imogen.sdk.ImogenException
 import com.imogen.sdk.UploadOptions
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -30,15 +31,22 @@ class BackupWorker(
     parameters: WorkerParameters,
 ) : CoroutineWorker(context, parameters) {
 
-    override suspend fun doWork(): Result {
-        // First, and unconditionally: every early return below is a pass that found
-        // nothing to do, and the last pass's verdict — "signed out of family.example.org"
-        // — would otherwise sit in the shade long after signing in again put it right.
-        BackupNotifications.clearResult(applicationContext)
+    override suspend fun doWork(): Result = try {
+        pass()
+    } catch (cancelled: CancellationException) {
+        // Being stopped is not a verdict. WorkManager is bringing the pass back.
+        throw cancelled
+    } catch (error: Exception) {
+        // Anything the pass did not expect — a database that will not open, a scan that
+        // ran out of memory. Without this the worker dies, the screen says the backup
+        // could not finish, and the shade says nothing at all.
+        finish(Result.failure(), PassNotice.Failed(FailureReason.Unknown, emptyList()))
+    }
 
+    private suspend fun pass(): Result {
         val app = applicationContext as ImogenApplication
         val preferences = app.backupSettings.current()
-        if (!preferences.enabled) return Result.success()
+        if (!preferences.enabled) return finish(Result.success())
 
         val book = app.accountStore.current()
         val ledger = BackupLedger.get(applicationContext).uploads()
@@ -51,7 +59,7 @@ class BackupWorker(
         }
 
         val destinations = book.backingUpTo
-        if (destinations.isEmpty()) return Result.success()
+        if (destinations.isEmpty()) return finish(Result.success())
 
         // Before the scan, because MediaStore answers a query it will not serve with an
         // empty cursor and no error at all. Without this the pass reads nothing, reports
@@ -60,11 +68,10 @@ class BackupWorker(
         if (MediaPermission.check(applicationContext, preferences.includeVideos) ==
             MediaAccess.Denied
         ) {
-            BackupNotifications.post(
-                applicationContext,
+            return finish(
+                Result.failure(workDataOf(RESULT_REASON to REASON_MEDIA_ACCESS)),
                 PassNotice.Failed(FailureReason.MediaAccess, emptyList()),
             )
-            return Result.failure(workDataOf(RESULT_REASON to REASON_MEDIA_ACCESS))
         }
 
         // Said before the scan rather than after it: reading several thousand MediaStore
@@ -78,7 +85,7 @@ class BackupWorker(
                 cameraOnly = preferences.cameraOnly,
             )
         }
-        if (media.isEmpty()) return Result.success()
+        if (media.isEmpty()) return finish(Result.success())
 
         // Oldest first. A backup that starts today and works backwards leaves somebody
         // watching the count go up with no idea whether it will ever reach the bottom.
@@ -101,7 +108,7 @@ class BackupWorker(
                 destinations.map { it.backupKey },
                 System.currentTimeMillis(),
             )
-            return Result.success()
+            return finish(Result.success())
         }
 
         val ids = destinations.map { it.backupKey }
@@ -171,20 +178,19 @@ class BackupWorker(
 
         // Failure rather than retry: backing off would only repeat the refusal on a timer,
         // and silently. This is the one outcome that waiting cannot mend.
+        val sent = rowsOf(destinations, totals, uploaded)
         if (signedOut.isNotEmpty()) {
-            BackupNotifications.post(
-                applicationContext,
+            return finish(
+                Result.failure(workDataOf(RESULT_REASON to REASON_SIGNED_OUT)),
                 PassNotice.Failed(
                     FailureReason.SignedOut,
                     destinations.filter { it.backupKey in signedOut }.map { it.serverLabel },
+                    sent,
                 ),
             )
-            return Result.failure(workDataOf(RESULT_REASON to REASON_SIGNED_OUT))
         }
 
-        finishedNotice(rowsOf(destinations, totals, uploaded))
-            ?.let { BackupNotifications.post(applicationContext, it) }
-        return Result.success()
+        return finish(Result.success(), finishedNotice(sent))
     }
 
     private suspend fun upload(
@@ -282,6 +288,16 @@ class BackupWorker(
             target.outputStream().use(input::copyTo)
         }
         target
+    }
+
+    /**
+     * Every way a pass can end goes through here, so the shade is never left holding the
+     * last pass's verdict — "signed out of family.example.org" outliving the sign-in that
+     * put it right was the whole of that bug. A retry is not an ending and does not.
+     */
+    private fun finish(result: Result, notice: PassNotice? = null): Result {
+        BackupNotifications.settle(applicationContext, notice)
+        return result
     }
 
     private fun rowsOf(

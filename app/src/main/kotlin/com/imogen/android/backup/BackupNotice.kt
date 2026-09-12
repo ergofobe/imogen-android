@@ -15,7 +15,16 @@ data class DestinationProgress(
 /** What the shade is left holding once a pass has ended. */
 sealed interface PassNotice {
     data class Finished(val destinations: List<DestinationProgress>) : PassNotice
-    data class Failed(val reason: FailureReason, val servers: List<String>) : PassNotice
+    /**
+     * [sent] is what did get through before the pass gave up. A server signing us out
+     * does not unsend the four hundred photographs the other one took, and a notice that
+     * mentions only the failure loses them.
+     */
+    data class Failed(
+        val reason: FailureReason,
+        val servers: List<String>,
+        val sent: List<DestinationProgress> = emptyList(),
+    ) : PassNotice
 }
 
 /**
@@ -60,7 +69,10 @@ fun noticeDetail(notice: PassNotice): String? = when (notice) {
         .takeIf { it.size > 1 }
         ?.joinToString("\n") { "${it.label} · ${it.completed} backed up" }
 
-    is PassNotice.Failed -> null
+    is PassNotice.Failed -> notice.sent
+        .filter { it.completed > 0 }
+        .takeIf { it.isNotEmpty() }
+        ?.joinToString("\n") { "${it.label} · ${it.completed} backed up" }
 }
 
 private fun finishedText(destinations: List<DestinationProgress>): String {

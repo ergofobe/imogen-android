@@ -76,16 +76,23 @@ object BackupNotifications {
     }
 
     /**
-     * The verdict, replacing the progress notification.
+     * What the shade is left holding when a pass ends: this verdict, or nothing.
      *
-     * The cancel covers the case WorkManager does not: a pass whose foreground promotion
-     * was refused owns notification 4201 itself. While the worker really is in the
-     * foreground the platform ignores it and WorkManager's own teardown takes the
-     * notification down a moment later.
+     * One call rather than a cancel and a post, because a pass that keeps failing every
+     * six hours posts the same verdict every six hours — and cancelling first would make
+     * each one a new notification, which is exactly what `setOnlyAlertOnce` is there to
+     * stop. Updating the record in place is what keeps it silent after the first.
+     *
+     * The progress notification goes either way. That covers the case WorkManager does
+     * not: a pass whose foreground promotion was refused owns 4201 itself.
      */
-    fun post(context: Context, notice: PassNotice) {
+    fun settle(context: Context, notice: PassNotice?) {
         val manager = NotificationManagerCompat.from(context)
         manager.cancel(PROGRESS_ID)
+        if (notice == null) {
+            manager.cancel(RESULT_ID)
+            return
+        }
         // POST_NOTIFICATIONS is optional and the upload runs without it. Denied, this is
         // simply nothing — never a reason to fail a pass that has already done its work.
         // The version guard is not ceremony: before 33 the permission is unknown to the
@@ -103,11 +110,6 @@ object BackupNotifications {
             // Revoked between the check and here, which is rare and is still not worth a
             // crash at the end of a pass that worked.
         }
-    }
-
-    /** So a pass that is running now is not sitting underneath the last one's verdict. */
-    fun clearResult(context: Context) {
-        NotificationManagerCompat.from(context).cancel(RESULT_ID)
     }
 
     private fun builder(context: Context, channel: String) =

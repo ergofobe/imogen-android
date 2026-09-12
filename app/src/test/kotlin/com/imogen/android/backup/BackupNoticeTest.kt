@@ -87,6 +87,17 @@ class BackupNoticeTest {
     }
 
     @Test
+    fun `what did get through survives the server that did not`() {
+        val notice = PassNotice.Failed(
+            FailureReason.SignedOut,
+            listOf("family.example.org"),
+            listOf(to("photos.example.com", 400), to("family.example.org", 0)),
+        )
+
+        assertEquals("photos.example.com · 400 backed up", noticeDetail(notice))
+    }
+
+    @Test
     fun `losing access to the camera roll is about the phone, not a server`() {
         val notice = PassNotice.Failed(FailureReason.MediaAccess, emptyList())
 
