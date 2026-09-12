@@ -41,6 +41,9 @@ class TimelineIndex(val buckets: List<TimelineBucket>) {
         starts[buckets.size] = running
     }
 
+    /** Counts by date, for asking about a day rather than about a position. */
+    private val countsByDate: Map<String, Long> = buckets.associate { it.date to it.count }
+
     val entryCount: Int get() = starts[buckets.size]
 
     val photoCount: Long get() = buckets.sumOf { it.count }
@@ -80,6 +83,25 @@ class TimelineIndex(val buckets: List<TimelineBucket>) {
      */
     fun entryAtFraction(fraction: Float): Int =
         (entryCount * fraction.coerceIn(0f, 1f)).toInt().coerceIn(0, (entryCount - 1).coerceAtLeast(0))
+
+    /** How many photographs the server filed under [date], or null if it lists no such day. */
+    fun countOf(date: String): Long? = countsByDate[date]
+
+    /**
+     * Held days this index no longer agrees with, keyed by date and sized in photographs.
+     *
+     * A day is fetched whole, so a day in memory is a complete copy of what the server
+     * held at the time. Its bucket count is the server's own tally of the same day, and
+     * the two disagreeing is the entire evidence that the day has gained or lost
+     * photographs since — which is what a reload has to fetch again. Everything else in
+     * memory is still current, so a pull that finds nothing new costs one request rather
+     * than one per day on the screen.
+     *
+     * A held day that has left the index altogether is stale too: the last photograph in
+     * it is gone, and the copy in memory is of a day that no longer exists.
+     */
+    fun staleDays(held: Map<String, Int>): Set<String> =
+        held.filterNot { (date, size) -> countsByDate[date] == size.toLong() }.keys
 
     /**
      * Removes one photograph from a day's count, and the day itself when it empties.

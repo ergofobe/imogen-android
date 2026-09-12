@@ -114,6 +114,35 @@ class TimelineIndexTest {
             dayBounds("2026-08-27"),
         )
     }
+
+    // --- what a reload has to fetch again ---
+
+    @Test
+    fun `a day knows its count, and a day the index has never heard of has none`() {
+        assertEquals(3L, index.countOf("2026-08-27"))
+        assertEquals(null, index.countOf("2026-08-24"))
+    }
+
+    @Test
+    fun `days the index still agrees with are not stale`() {
+        assertTrue(index.staleDays(mapOf("2026-08-27" to 3, "2026-08-25" to 2)).isEmpty())
+        assertTrue(index.staleDays(emptyMap()).isEmpty())
+    }
+
+    @Test
+    fun `a held day that has gained or lost photographs is stale`() {
+        val stale = index.staleDays(
+            mapOf("2026-08-27" to 2, "2026-08-26" to 1, "2026-08-25" to 3),
+        )
+
+        assertEquals(setOf("2026-08-27", "2026-08-25"), stale)
+    }
+
+    @Test
+    fun `a held day the index no longer lists at all is stale`() {
+        assertEquals(setOf("2026-08-24"), index.staleDays(mapOf("2026-08-24" to 1)))
+    }
+
 }
 
 class TimelineLayoutTest {
