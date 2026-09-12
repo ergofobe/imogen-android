@@ -31,15 +31,27 @@ class BackupState(private val context: Context) {
     }
 
     /** Stamped when a pass finishes with nothing left owed to these accounts. */
-    suspend fun recordCompleted(accountIds: Collection<String>, at: Long) {
-        if (accountIds.isEmpty()) return
+    suspend fun recordCompleted(backupKeys: Collection<String>, at: Long) {
+        if (backupKeys.isEmpty()) return
         context.backupStateStore.edit { stored ->
-            accountIds.forEach { stored[longPreferencesKey("$PREFIX$it")] = at }
+            backupKeys.forEach { stored[longPreferencesKey("$PREFIX$it")] = at }
         }
     }
 
-    suspend fun forget(accountId: String) {
-        context.backupStateStore.edit { it.remove(longPreferencesKey("$PREFIX$accountId")) }
+    suspend fun forget(backupKey: String) {
+        context.backupStateStore.edit { it.remove(longPreferencesKey("$PREFIX$backupKey")) }
+    }
+
+    /** Moves a stamp an earlier version wrote under a device-local account id. */
+    suspend fun rename(from: String, to: String) {
+        context.backupStateStore.edit { stored ->
+            val held = stored[longPreferencesKey("$PREFIX$from")] ?: return@edit
+            stored.remove(longPreferencesKey("$PREFIX$from"))
+            // The destination wins when it is the later of the two: a pass that has
+            // already run under the new key knows more than the one that ran under the old.
+            val there = stored[longPreferencesKey("$PREFIX$to")]
+            stored[longPreferencesKey("$PREFIX$to")] = maxOf(held, there ?: held)
+        }
     }
 
     private companion object {

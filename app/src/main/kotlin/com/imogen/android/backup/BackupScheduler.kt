@@ -76,7 +76,7 @@ object BackupScheduler {
      */
     fun status(
         context: Context,
-        accountIds: List<String>,
+        backupKeys: List<String>,
         preferences: BackupPreferences,
     ): Flow<BackupStatus> {
         val manager = WorkManager.getInstance(context)
@@ -93,10 +93,12 @@ object BackupScheduler {
         }
 
         val backedUp: Flow<Map<String, Int>> =
-            if (accountIds.isEmpty()) {
+            if (backupKeys.isEmpty()) {
                 flowOf(emptyMap())
             } else {
-                combine(accountIds.map { id -> ledger.countFor(id).map { id to it } }) { it.toMap() }
+                combine(
+                    backupKeys.map { key -> ledger.countFor(key).map { key to it } },
+                ) { it.toMap() }
             }
 
         return combine(reported, backedUp, BackupState(context).lastCompleted) { info, counts, lastRun ->
@@ -116,23 +118,23 @@ object BackupScheduler {
                         failureReason = info?.outputData?.getString(BackupWorker.RESULT_REASON),
                     ),
                 ),
-                accounts = accountIds.map { id ->
+                accounts = backupKeys.map { key ->
                     val slot = progress?.getStringArray(BackupWorker.PROGRESS_ACCOUNTS)
-                        ?.indexOf(id)?.takeIf { it >= 0 }
+                        ?.indexOf(key)?.takeIf { it >= 0 }
                     AccountProgress(
-                        accountId = id,
+                        backupKey = key,
                         completed = slot?.let {
                             progress.getIntArray(BackupWorker.PROGRESS_PER_ACCOUNT)?.getOrNull(it)
                         } ?: 0,
                         total = slot?.let {
                             progress.getIntArray(BackupWorker.PROGRESS_TOTALS)?.getOrNull(it)
                         } ?: 0,
-                        backedUp = counts[id] ?: 0,
-                        lastCompletedAt = lastRun[id],
+                        backedUp = counts[key] ?: 0,
+                        lastCompletedAt = lastRun[key],
                         // The filename belongs to whichever destination it is being sent
                         // to; showing it against all of them would be a lie about two.
                         filename = progress?.getString(BackupWorker.PROGRESS_FILENAME)
-                            ?.takeIf { progress.getString(BackupWorker.PROGRESS_ACCOUNT) == id },
+                            ?.takeIf { progress.getString(BackupWorker.PROGRESS_ACCOUNT) == key },
                     )
                 },
             )

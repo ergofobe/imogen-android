@@ -71,7 +71,8 @@ private fun PassSignals.waitingReason(): WaitingReason = when {
 
 /** How far one destination has got, and how much is already there. */
 data class AccountProgress(
-    val accountId: String,
+    /** `Account.backupKey`, so a row survives the account being signed out and back in. */
+    val backupKey: String,
     /** Files sent to this account during the pass now running, if one is. */
     val completed: Int,
     /** Files this account is owed by the pass now running, if one is. */

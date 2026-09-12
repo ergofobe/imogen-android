@@ -10,7 +10,7 @@ class FailedUploadsTest {
         displayName: String? = "PXL_1.jpg",
         error: String? = "rejected",
     ) = FailedUpload(
-        accountId = "acc",
+        backupKey = "https://photos.example.com|user-7",
         deviceAssetId = "android:external_primary:125",
         displayName = displayName,
         attempts = attempts,
@@ -85,7 +85,7 @@ class FailedUploadsTest {
     fun `retrying keeps the identity of the file it is retrying`() {
         val original = failure(attempts = 3)
         val again = retried(original)
-        assertEquals(original.accountId, again.accountId)
+        assertEquals(original.backupKey, again.backupKey)
         assertEquals(original.deviceAssetId, again.deviceAssetId)
         assertEquals(original.displayName, again.displayName)
     }

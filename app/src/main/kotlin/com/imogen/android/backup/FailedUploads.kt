@@ -15,7 +15,8 @@ enum class FailureState {
 
 /** One file that did not make it to one account. */
 data class FailedUpload(
-    val accountId: String,
+    /** `Account.backupKey`. The server is readable from it even once the account is gone. */
+    val backupKey: String,
     val deviceAssetId: String,
     /** Null for rows written before the ledger recorded names. */
     val displayName: String?,

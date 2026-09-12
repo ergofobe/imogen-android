@@ -128,7 +128,7 @@ fun BackupScreen(
             // choosing three servers means three copies, and three separate answers to
             // how far along it is.
             if (account.backupEnabled) {
-                AccountStatusRow(status.accounts.firstOrNull { it.accountId == account.id })
+                AccountStatusRow(status.accounts.firstOrNull { it.backupKey == account.backupKey })
             }
         }
 
