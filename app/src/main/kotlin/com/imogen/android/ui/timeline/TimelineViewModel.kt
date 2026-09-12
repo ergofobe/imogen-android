@@ -19,7 +19,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlin.coroutines.coroutineContext
 
 data class TimelineState(
     val index: TimelineIndex = TimelineIndex(emptyList()),
@@ -80,11 +79,23 @@ class TimelineViewModel(
     /** Touch order, oldest first. Plain list: it is bounded by [MAX_LOADED_DAYS]. */
     private val recency = ArrayDeque<String>()
 
+    /**
+     * Which read of the library is the current one, so a slow answer cannot overwrite a
+     * newer question.
+     *
+     * [refresh] and [reload] ask the same endpoint and both install an index. Without this
+     * a pull whose request is still out when a bulk trash refreshes would land afterwards
+     * and put the trashed photographs' counts back — leaving cells the refetched days can
+     * never fill, because the index asks for more tiles than the server has.
+     */
+    private var generation = 0
+
     init {
         refresh()
     }
 
     fun refresh() {
+        generation++
         _state.update { it.copy(loading = true, error = null) }
         inFlight.values.forEach(Job::cancel)
         inFlight.clear()
@@ -135,11 +146,15 @@ class TimelineViewModel(
      */
     fun reload() {
         if (_state.value.refreshing) return
+        val mine = ++generation
         _state.update { it.copy(refreshing = true) }
 
         viewModelScope.launch {
             runCatching { session.client.assets.timeline(TimelineQuery(filter)) }
                 .onSuccess { timeline ->
+                    // Something has read the library since — a bulk trash, a failed
+                    // archive — and it read it later than this did. Its answer stands.
+                    if (mine != generation) return@onSuccess
                     val index = TimelineIndex(timeline.buckets)
                     val stale = index.staleDays(_state.value.days.mapValues { it.value.size })
 
@@ -157,6 +172,7 @@ class TimelineViewModel(
                     stale.filter { index.countOf(it) != null }.forEach(::ensureLoaded)
                 }
                 .onFailure { error ->
+                    if (mine != generation) return@onFailure
                     _state.update { it.copy(refreshing = false, notice = describe(error)) }
                 }
         }

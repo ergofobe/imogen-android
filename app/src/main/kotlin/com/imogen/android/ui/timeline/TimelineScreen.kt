@@ -4,11 +4,17 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -87,7 +93,6 @@ import kotlinx.coroutines.launch
  * That is what makes the scrubber honest. A grid that grows as pages arrive has a
  * scrollbar that means something different every second.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TimelineScreen(
     session: Session,
@@ -103,7 +108,6 @@ fun TimelineScreen(
 ) {
     val state by model.state.collectAsStateWithLifecycle()
     val grid = rememberLazyGridState()
-    val pull = rememberPullToRefreshState()
     val scope = rememberCoroutineScope()
 
     // Keyed on the model. This composable is re-invoked in the same slot with a different
@@ -164,7 +168,19 @@ fun TimelineScreen(
         return
     }
     if (state.index.isEmpty) {
-        EmptyState(emptyHeadline, emptyBody, modifier)
+        PullToReload(state.refreshing, model::reload, contentPadding, modifier.fillMaxSize()) {
+            // The gesture is driven by nested scroll, and an empty library has nothing
+            // that scrolls. A column that fills the viewport and is scrollable anyway
+            // gives the drag somewhere to come from. This is the case that needs it most:
+            // somebody who has just uploaded their first photographs from the CLI is
+            // looking at a screen with nothing else on it to pull.
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val viewport = maxHeight
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    EmptyState(emptyHeadline, emptyBody, Modifier.heightIn(min = viewport))
+                }
+            }
+        }
         return
     }
 
@@ -232,22 +248,13 @@ fun TimelineScreen(
     // Photographs arrive from elsewhere and nothing tells the app so. This is the gesture
     // somebody who already knows reaches for, and it reloads in place — see
     // [TimelineViewModel.reload], which is why the grid under the finger keeps its cells.
-    PullToRefreshBox(
-        isRefreshing = state.refreshing,
-        onRefresh = model::reload,
-        state = pull,
+    PullToReload(
+        refreshing = state.refreshing,
+        onReload = model::reload,
+        contentPadding = contentPadding,
         modifier = modifier
             .fillMaxSize()
             .onSizeChanged { viewport = it },
-        indicator = {
-            PullToRefreshDefaults.Indicator(
-                state = pull,
-                isRefreshing = state.refreshing,
-                // Under the top bar is where the default would put it, which on this
-                // screen is behind it. The grid is inset by the same padding.
-                modifier = Modifier.align(Alignment.TopCenter).padding(contentPadding),
-            )
-        },
     ) {
         LazyVerticalGrid(
             columns = GridCells.Fixed(columns),
@@ -447,6 +454,41 @@ fun TimelineScreen(
             },
         )
     }
+}
+
+/**
+ * A pull-to-refresh wrapper with the indicator where this screen wants it.
+ *
+ * Shared by the grid and by the empty library, so the gesture is in the same place
+ * whether or not there is anything to show — an empty library is exactly when somebody
+ * has just put photographs on the server from somewhere else.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PullToReload(
+    refreshing: Boolean,
+    onReload: () -> Unit,
+    contentPadding: PaddingValues,
+    modifier: Modifier = Modifier,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    val pull = rememberPullToRefreshState()
+    PullToRefreshBox(
+        isRefreshing = refreshing,
+        onRefresh = onReload,
+        state = pull,
+        modifier = modifier,
+        indicator = {
+            PullToRefreshDefaults.Indicator(
+                state = pull,
+                isRefreshing = refreshing,
+                // Where the default would put it is behind the top bar. The content is
+                // inset by the same padding.
+                modifier = Modifier.align(Alignment.TopCenter).padding(contentPadding),
+            )
+        },
+        content = content,
+    )
 }
 
 @Composable
