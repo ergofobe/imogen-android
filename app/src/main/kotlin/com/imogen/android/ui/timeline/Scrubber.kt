@@ -245,7 +245,12 @@ fun Scrubber(
                             currentOnScrubbing(false)
                             // Seek once more on release: the grid only fetches days when
                             // the drag stops, so this is the request that actually matters.
-                            currentOnSeek(dragDay)
+                            // Clamped, because a finger lifted without moving after a
+                            // refresh still holds the day it took hold of.
+                            val buckets = currentLayout.index.buckets
+                            if (buckets.isNotEmpty()) {
+                                currentOnSeek(dragDay.coerceIn(0, buckets.lastIndex))
+                            }
                         },
                         onDragCancel = {
                             dragging = false

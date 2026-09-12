@@ -46,6 +46,7 @@ class ScrubberLayoutChangeTest {
     )
 
     private var scrubbing = false
+    private val seeks = mutableListOf<Int>()
     private var layout by mutableStateOf(layoutOf(12))
     private var day by mutableIntStateOf(0)
 
@@ -60,7 +61,10 @@ class ScrubberLayoutChangeTest {
                 layout = layout,
                 day = day,
                 onScrubbing = { scrubbing = it },
-                onSeek = { day = it },
+                onSeek = {
+                    seeks += it
+                    day = it
+                },
                 modifier = Modifier.align(Alignment.TopEnd),
             )
         }
@@ -102,9 +106,13 @@ class ScrubberLayoutChangeTest {
         compose.runOnIdle { layout = layoutOf(2) }
         compose.waitForIdle()
 
-        compose.onNodeWithTag("grid").performTouchInput { moveBy(Offset(0f, -200f)) }
+        // Lifted where it was, without moving: the release seek is the one that has to be
+        // brought back inside the shorter index, since the grid indexes its buckets raw.
         compose.onNodeWithTag("grid").performTouchInput { up() }
-        compose.runOnIdle { assertFalse(scrubbing) }
+        compose.runOnIdle {
+            assertFalse(scrubbing)
+            assertTrue(seeks.last() <= 1)
+        }
     }
 
     @Test
