@@ -19,12 +19,22 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlin.coroutines.coroutineContext
 
 data class TimelineState(
     val index: TimelineIndex = TimelineIndex(emptyList()),
     /** Loaded tiles, by day. Days nobody has looked at are simply absent. */
     val days: Map<String, List<TimelineTile>> = emptyMap(),
     val loading: Boolean = true,
+    /**
+     * A reload asked for by hand, which keeps what is already on the screen.
+     *
+     * Distinct from [loading], which means there is nothing to show yet. The two are
+     * different sentences — "wait, there is nothing here" and "what you are looking at is
+     * being checked" — and a pull-to-refresh must say the second or it blanks the grid
+     * somebody is holding.
+     */
+    val refreshing: Boolean = false,
     val error: String? = null,
     /**
      * Something to say about an edit that has already happened, or failed to.
@@ -107,6 +117,52 @@ class TimelineViewModel(
     }
 
     /**
+     * Re-reads the library without taking it off the screen.
+     *
+     * Photographs arrive from elsewhere — the CLI, another device, the web — and nothing
+     * pushes that news here, so somebody who knows the library has changed needs a gesture
+     * that says so. [refresh] is the wrong one: it drops every loaded day, and a grid that
+     * turns grey under the finger that pulled it looks like a fault rather than an answer.
+     *
+     * So the index is fetched, and only the days it no longer agrees with are thrown away
+     * and asked for again. A pull that finds nothing new costs one request and changes
+     * nothing visible except the spinner; a pull after an upload reloads the day or two
+     * that grew. Either way the grid keeps its cells, and therefore its scroll position.
+     *
+     * A failure says so and leaves the library alone. There is a whole timeline on the
+     * screen already, and replacing it with an error page because a refresh did not get
+     * through would lose more than it explains.
+     */
+    fun reload() {
+        if (_state.value.refreshing) return
+        _state.update { it.copy(refreshing = true) }
+
+        viewModelScope.launch {
+            runCatching { session.client.assets.timeline(TimelineQuery(filter)) }
+                .onSuccess { timeline ->
+                    val index = TimelineIndex(timeline.buckets)
+                    val stale = index.staleDays(_state.value.days.mapValues { it.value.size })
+
+                    // Cancelled first: a day still in flight is fetching against counts
+                    // that have just been superseded, and letting it land would put a day
+                    // back that is about to be asked for again.
+                    stale.forEach { date -> inFlight.remove(date)?.cancel() }
+                    recency.removeAll(stale)
+                    _state.update {
+                        it.copy(index = index, days = it.days - stale, refreshing = false)
+                    }
+
+                    // Days the index has dropped entirely are gone, not changed; asking
+                    // for one would fetch an empty bucket to put nowhere.
+                    stale.filter { index.countOf(it) != null }.forEach(::ensureLoaded)
+                }
+                .onFailure { error ->
+                    _state.update { it.copy(refreshing = false, notice = describe(error)) }
+                }
+        }
+    }
+
+    /**
      * Asks for a day if it is not already here or on its way.
      *
      * Called from composition as cells appear, so it has to be cheap and idempotent —
@@ -135,7 +191,11 @@ class TimelineViewModel(
                 remember(date)
             }
 
-            inFlight.remove(date)
+            // By identity, not by date. A reload cancels a stale day's fetch and starts
+            // another for the same day in the same tick; the cancelled one then resumes to
+            // tidy up, and removing by date alone would take its replacement off the books
+            // — leaving a second fetch of that day free to start alongside it.
+            if (inFlight[date] === coroutineContext[Job]) inFlight.remove(date)
         }
     }
 
