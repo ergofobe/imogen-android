@@ -92,9 +92,15 @@ fun Scrubber(
     val currentOnScrubbing by rememberUpdatedState(onScrubbing)
     val currentOnSeek by rememberUpdatedState(onSeek)
 
-    // A refresh landing mid-drag can hand over a shorter library than the one the thumb
-    // was last placed in.
-    val labelDay = dragDay.coerceIn(0, layout.index.buckets.lastIndex)
+    // The label names the day release will go to, so it is read off the same fraction the
+    // thumb is drawn from rather than off the day last landed on: a refresh restretches
+    // the rail under a finger that is not moving, and nothing recomputes that day until it
+    // does. At rest there is no fraction to read and the day is the grid's own.
+    val labelDay = if (dragging) {
+        layout.dayAtFraction(dragFraction)
+    } else {
+        dragDay.coerceIn(0, layout.index.buckets.lastIndex)
+    }
 
     val thumbHeight = 48.dp
     val thumbPx = with(density) { thumbHeight.toPx() }

@@ -121,9 +121,11 @@ class ScrubberLayoutChangeTest {
         takeHoldOfTheThumb()
 
         // The last photographs trashed: the rail has nothing to measure and leaves.
+        //
+        // This one already held before the gesture stopped being keyed on the layout —
+        // detaching the whole node delivers a cancel where changing its key did not. It is
+        // here so the fix cannot quietly take that away.
         compose.runOnIdle { layout = layoutOf(0) }
         compose.runOnIdle { assertFalse(scrubbing) }
-
-        compose.onNodeWithTag("grid").performTouchInput { up() }
     }
 }
