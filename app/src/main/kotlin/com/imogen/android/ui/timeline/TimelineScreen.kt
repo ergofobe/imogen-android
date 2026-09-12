@@ -168,16 +168,21 @@ fun TimelineScreen(
         return
     }
     if (state.index.isEmpty) {
-        PullToReload(state.refreshing, model::reload, contentPadding, modifier.fillMaxSize()) {
+        PullToReload(
+            refreshing = state.refreshing,
+            onReload = model::reload,
+            contentPadding = contentPadding,
+            modifier = modifier.fillMaxSize(),
+        ) {
             // The gesture is driven by nested scroll, and an empty library has nothing
             // that scrolls. A column that fills the viewport and is scrollable anyway
             // gives the drag somewhere to come from. This is the case that needs it most:
             // somebody who has just uploaded their first photographs from the CLI is
             // looking at a screen with nothing else on it to pull.
             BoxWithConstraints(Modifier.fillMaxSize()) {
-                val viewport = maxHeight
+                val available = maxHeight
                 Column(Modifier.verticalScroll(rememberScrollState())) {
-                    EmptyState(emptyHeadline, emptyBody, Modifier.heightIn(min = viewport))
+                    EmptyState(emptyHeadline, emptyBody, Modifier.heightIn(min = available))
                 }
             }
         }

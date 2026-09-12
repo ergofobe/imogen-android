@@ -80,13 +80,14 @@ class TimelineViewModel(
     private val recency = ArrayDeque<String>()
 
     /**
-     * Which read of the library is the current one, so a slow answer cannot overwrite a
-     * newer question.
+     * Which read of the library is the current one.
      *
-     * [refresh] and [reload] ask the same endpoint and both install an index. Without this
-     * a pull whose request is still out when a bulk trash refreshes would land afterwards
-     * and put the trashed photographs' counts back — leaving cells the refetched days can
-     * never fill, because the index asks for more tiles than the server has.
+     * [refresh] and [reload] ask the same endpoint and both install an index, so one can
+     * answer after the other and undo it. The rule is that [refresh] wins and [reload]
+     * stands down: a refresh is the authoritative reset, and it drops every loaded day, so
+     * whatever index it installs the days are refetched against that same index. A reload
+     * landing late is the harmful direction — it keeps the loaded days, so an index that
+     * has gone backwards leaves cells the refetched days can never fill.
      */
     private var generation = 0
 
