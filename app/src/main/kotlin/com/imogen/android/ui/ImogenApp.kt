@@ -722,5 +722,7 @@ enum class LinkTarget {
     Accounts,
 }
 
+// Exactly, not by prefix: `imogen://backupserver?code=…` is a pairing link for a server
+// called backupserver, and swallowing it here would lose it entirely.
 fun targetOf(url: String): LinkTarget =
-    if (url.startsWith(BackupNotifications.DEEP_LINK)) LinkTarget.Backup else LinkTarget.Accounts
+    if (url == BackupNotifications.DEEP_LINK) LinkTarget.Backup else LinkTarget.Accounts

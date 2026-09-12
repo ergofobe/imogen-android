@@ -31,6 +31,11 @@ class BackupWorker(
 ) : CoroutineWorker(context, parameters) {
 
     override suspend fun doWork(): Result {
+        // First, and unconditionally: every early return below is a pass that found
+        // nothing to do, and the last pass's verdict — "signed out of family.example.org"
+        // — would otherwise sit in the shade long after signing in again put it right.
+        BackupNotifications.clearResult(applicationContext)
+
         val app = applicationContext as ImogenApplication
         val preferences = app.backupSettings.current()
         if (!preferences.enabled) return Result.success()
@@ -102,7 +107,10 @@ class BackupWorker(
         val ids = destinations.map { it.backupKey }
         val totals = ids.map { outstanding.getValue(it).size }.toIntArray()
         val perAccount = IntArray(ids.size)
-        BackupNotifications.clearResult(applicationContext)
+        // What was actually sent, as against what the bar counts as dealt with. A file
+        // the server refused is settled but it is not backed up, and only one of those
+        // two is a thing to tell somebody at the end of a pass.
+        val uploaded = IntArray(ids.size)
 
         var completed = 0
         var retryable = false
@@ -132,6 +140,7 @@ class BackupWorker(
                     UploadOutcome.Uploaded -> {
                         completed += 1
                         perAccount[slot] += 1
+                        uploaded[slot] += 1
                     }
                     // Counted as dealt with, because it will not be tried again. Leaving
                     // it out would strand the bar one short of its total for ever.
@@ -173,7 +182,7 @@ class BackupWorker(
             return Result.failure(workDataOf(RESULT_REASON to REASON_SIGNED_OUT))
         }
 
-        finishedNotice(rowsOf(destinations, totals, perAccount))
+        finishedNotice(rowsOf(destinations, totals, uploaded))
             ?.let { BackupNotifications.post(applicationContext, it) }
         return Result.success()
     }

@@ -21,4 +21,9 @@ class DeepLinkTest {
         assertEquals(LinkTarget.Accounts, targetOf("imogen://pair?code=abc"))
         assertEquals(LinkTarget.Accounts, targetOf("imogen://oauth?code=abc"))
     }
+
+    @Test
+    fun `a server whose name starts with backup is not the backup screen`() {
+        assertEquals(LinkTarget.Accounts, targetOf("imogen://backupserver?code=abc"))
+    }
 }

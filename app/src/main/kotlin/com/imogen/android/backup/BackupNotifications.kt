@@ -67,14 +67,21 @@ object BackupNotifications {
             .setContentText(noticeText(notice))
             .setSmallIcon(iconFor(notice))
             .setAutoCancel(true)
+            // A pass that cannot run keeps failing every six hours, and the same verdict
+            // arriving with a sound four times a day is the nuisance this whole change is
+            // trying not to become. Said once, then updated in place.
+            .setOnlyAlertOnce(true)
             .withDetail(noticeDetail(notice))
             .build()
     }
 
     /**
-     * Replaces the ongoing notification rather than adding to it. WorkManager takes the
-     * foreground one away as the worker ends anyway, but only after this has run, and two
-     * backup notifications side by side for even a moment is one too many.
+     * The verdict, replacing the progress notification.
+     *
+     * The cancel covers the case WorkManager does not: a pass whose foreground promotion
+     * was refused owns notification 4201 itself. While the worker really is in the
+     * foreground the platform ignores it and WorkManager's own teardown takes the
+     * notification down a moment later.
      */
     fun post(context: Context, notice: PassNotice) {
         val manager = NotificationManagerCompat.from(context)
