@@ -3,6 +3,7 @@ package com.imogen.android.data
 import kotlinx.serialization.encodeToString
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -177,5 +178,57 @@ class TokenPrecedenceTest {
         val offered = tokens("offered", obtainedAt = 1_000)
 
         assertEquals(held, newerOf(held, offered))
+    }
+}
+
+class BackupKeyTest {
+
+    private fun account(id: String, server: String, user: String) = Account(
+        id = id,
+        serverUrl = server,
+        userId = user,
+        email = "someone@example.com",
+        name = "Someone",
+        clientId = "client",
+        tokens = TokenSet("at", "rt", 0, 3600, ""),
+    )
+
+    @Test
+    fun `the same account on the same server keys the same after a new local id`() {
+        val before = account("local-1", "https://photos.example.com", "user-7")
+        val after = account("local-2", "https://photos.example.com", "user-7")
+
+        assertEquals(before.backupKey, after.backupKey)
+    }
+
+    @Test
+    fun `the same user on two servers is two keys`() {
+        val home = account("local-1", "https://home.example.com", "user-7")
+        val club = account("local-2", "https://club.example.com", "user-7")
+
+        assertNotEquals(home.backupKey, club.backupKey)
+    }
+
+    @Test
+    fun `two users on one server are two keys`() {
+        val mine = account("local-1", "https://photos.example.com", "user-7")
+        val yours = account("local-2", "https://photos.example.com", "user-8")
+
+        assertNotEquals(mine.backupKey, yours.backupKey)
+    }
+
+    @Test
+    fun `a key gives the server back, so an orphaned row can still name it`() {
+        val key = account("local-1", "https://photos.example.com", "user-7").backupKey
+
+        assertEquals("https://photos.example.com", serverUrlOfBackupKey(key))
+        assertEquals("photos.example.com", serverLabelOf(serverUrlOfBackupKey(key)))
+    }
+
+    @Test
+    fun `a port survives the round trip`() {
+        val key = account("local-1", "http://10.0.2.2:3000", "user-7").backupKey
+
+        assertEquals("10.0.2.2:3000", serverLabelOf(serverUrlOfBackupKey(key)))
     }
 }

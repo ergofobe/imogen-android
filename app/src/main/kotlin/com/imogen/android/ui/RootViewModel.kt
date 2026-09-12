@@ -47,7 +47,16 @@ class RootViewModel(private val app: ImogenApplication) : ViewModel() {
         viewModelScope.launch { app.accountStore.setActive(accountId) }
     }
 
-    fun signOut(accountId: String) {
+    /**
+     * [forgetBackups] is the difference between stepping out and leaving for good.
+     *
+     * Left false, what has already been backed up is remembered, so signing in again to
+     * the same account on the same server picks the backup up where it stopped instead of
+     * sending the camera roll a second time. Set true, the ledger rows and the
+     * last-completed stamp go with the account — which is the only way to be rid of them,
+     * since nothing else can tell a sign-out that is final from one that is not.
+     */
+    fun signOut(accountId: String, forgetBackups: Boolean = false) {
         viewModelScope.launch {
             // The grant is revoked server-side first: an account removed from the phone
             // but left live on the server is a token nobody can see and nobody can stop.
@@ -59,6 +68,11 @@ class RootViewModel(private val app: ImogenApplication) : ViewModel() {
                         account.tokens.refreshToken?.let { token -> it.revoke(token) }
                     }
                 }
+            }
+            if (forgetBackups && account != null) {
+                com.imogen.android.backup.BackupLedger.get(app).uploads()
+                    .clearFor(account.backupKey)
+                com.imogen.android.backup.BackupState(app).forget(account.backupKey)
             }
             app.accountStore.remove(accountId)
             app.sessions.forget(accountId)

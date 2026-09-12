@@ -1,6 +1,7 @@
 package com.imogen.android.backup
 
 import android.content.Context
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
@@ -26,7 +27,13 @@ import kotlinx.coroutines.flow.Flow
  */
 @Entity(tableName = "uploads", primaryKeys = ["accountId", "deviceAssetId"])
 data class UploadRecord(
-    val accountId: String,
+    /**
+     * `Account.backupKey`, not `Account.id`. The column keeps its original name because
+     * the values in it changed and its shape did not, and renaming it would cost a
+     * migration of the one table that must never be lost.
+     */
+    @ColumnInfo(name = "accountId")
+    val backupKey: String,
     val deviceAssetId: String,
     val assetId: String?,
     val uploadedAt: Long,
@@ -47,14 +54,14 @@ data class UploadRecord(
 @Dao
 interface UploadDao {
 
-    @Query("select deviceAssetId from uploads where accountId = :accountId and assetId is not null")
-    suspend fun doneFor(accountId: String): List<String>
+    @Query("select deviceAssetId from uploads where accountId = :backupKey and assetId is not null")
+    suspend fun doneFor(backupKey: String): List<String>
 
-    @Query("select * from uploads where accountId = :accountId and assetId is null")
-    suspend fun failuresFor(accountId: String): List<UploadRecord>
+    @Query("select * from uploads where accountId = :backupKey and assetId is null")
+    suspend fun failuresFor(backupKey: String): List<UploadRecord>
 
-    @Query("select count(*) from uploads where accountId = :accountId and assetId is not null")
-    fun countFor(accountId: String): Flow<Int>
+    @Query("select count(*) from uploads where accountId = :backupKey and assetId is not null")
+    fun countFor(backupKey: String): Flow<Int>
 
     /** Everything outstanding, across every account, newest first. */
     @Query("select * from uploads where assetId is null order by uploadedAt desc")
@@ -66,9 +73,9 @@ interface UploadDao {
      */
     @Query(
         "update uploads set attempts = 0, lastError = null " +
-            "where accountId = :accountId and deviceAssetId = :deviceAssetId and assetId is null",
+            "where accountId = :backupKey and deviceAssetId = :deviceAssetId and assetId is null",
     )
-    suspend fun clearAttempts(accountId: String, deviceAssetId: String)
+    suspend fun clearAttempts(backupKey: String, deviceAssetId: String)
 
     @Query("update uploads set attempts = 0, lastError = null where assetId is null")
     suspend fun clearAllAttempts()
@@ -76,8 +83,24 @@ interface UploadDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun put(record: UploadRecord)
 
-    @Query("delete from uploads where accountId = :accountId")
-    suspend fun clearFor(accountId: String)
+    @Query("delete from uploads where accountId = :backupKey")
+    suspend fun clearFor(backupKey: String)
+
+    /**
+     * Moves rows an earlier version wrote under a device-local account id onto the
+     * account's stable key.
+     *
+     * `or replace` rather than a plain update because the primary key could collide, and
+     * a collision that aborts would leave the rows stranded under an id nothing asks
+     * about. Note which row wins: SQLite deletes the *destination* row and keeps the one
+     * being moved, which is the opposite of what "replace" suggests. That is safe only
+     * because `adoptStableKeys` runs before the pass writes anything, so the destination
+     * is empty every time this is called — not because the row it would discard does not
+     * matter. It does: discarding a success in favour of a stale failure would settle the
+     * file for ever and drop it out of the backup without saying so.
+     */
+    @Query("update or replace uploads set accountId = :to where accountId = :from")
+    suspend fun reassign(from: String, to: String)
 }
 
 /**

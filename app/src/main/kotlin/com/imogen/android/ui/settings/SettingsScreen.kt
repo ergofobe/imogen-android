@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -127,19 +128,48 @@ fun SettingsScreen(
     }
 
     signingOut?.let { account ->
+        // Reset per account rather than remembered: "forget everything" is a decision
+        // about the account in front of you, and carrying a tick over to the next one
+        // would throw away a backup nobody asked to throw away.
+        var forgetBackups by remember(account.id) { mutableStateOf(false) }
+
         AlertDialog(
             onDismissRequest = { signingOut = null },
             title = { Text("Sign out of ${account.serverLabel}?") },
             text = {
-                Text(
-                    "The photographs stay on the server. Anything waiting to be backed up " +
-                        "to this account will not be sent.",
-                )
+                Column {
+                    Text(
+                        "The photographs stay on the server. Anything waiting to be backed " +
+                            "up to this account will not be sent.",
+                    )
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { forgetBackups = !forgetBackups }
+                            .padding(top = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(checked = forgetBackups, onCheckedChange = { forgetBackups = it })
+                        Column(Modifier.weight(1f).padding(start = 8.dp)) {
+                            Text(
+                                "Forget what has been backed up",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                "Leave this off to sign in again later and carry on where " +
+                                    "the backup stopped. Turn it on and the next backup to " +
+                                    "this account starts from the oldest photograph.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
             },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        model.signOut(account.id)
+                        model.signOut(account.id, forgetBackups)
                         signingOut = null
                     },
                 ) { Text("Sign out") }

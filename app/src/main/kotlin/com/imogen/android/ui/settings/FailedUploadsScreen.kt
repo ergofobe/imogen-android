@@ -18,6 +18,8 @@ import androidx.compose.ui.unit.dp
 import com.imogen.android.backup.FailedUpload
 import com.imogen.android.backup.FailureState
 import com.imogen.android.backup.summarise
+import com.imogen.android.data.serverLabelOf
+import com.imogen.android.data.serverUrlOfBackupKey
 
 /**
  * The photographs that did not make it, and a way to ask again.
@@ -78,10 +80,10 @@ fun FailedUploadsScreen(
             HorizontalDivider()
         }
 
-        items(failures, key = { "${it.accountId}/${it.deviceAssetId}" }) { failure ->
+        items(failures, key = { "${it.backupKey}/${it.deviceAssetId}" }) { failure ->
             FailureRow(
                 failure = failure,
-                serverLabel = serverLabels[failure.accountId],
+                serverLabel = serverLabels[failure.backupKey],
                 onRetry = { onRetry(failure) },
             )
             HorizontalDivider()
@@ -100,7 +102,9 @@ private fun FailureRow(failure: FailedUpload, serverLabel: String?, onRetry: () 
         )
         Text(
             buildString {
-                append(serverLabel ?: failure.accountId)
+                // An account that has been signed out owns no label any more, and the
+                // key it left behind still names the server it was talking to.
+                append(serverLabel ?: serverLabelOf(serverUrlOfBackupKey(failure.backupKey)))
                 append(" · ")
                 append(
                     when (failure.state) {

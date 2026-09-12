@@ -534,9 +534,9 @@ private fun BackupPane(
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
     val book by model.book.collectAsStateWithLifecycle()
-    val accountIds = book?.accounts.orEmpty().map { it.id }
-    val status by androidx.compose.runtime.remember(accountIds, preferences) {
-        com.imogen.android.backup.BackupScheduler.status(context, accountIds, preferences)
+    val backupKeys = book?.accounts.orEmpty().map { it.backupKey }
+    val status by androidx.compose.runtime.remember(backupKeys, preferences) {
+        com.imogen.android.backup.BackupScheduler.status(context, backupKeys, preferences)
     }.collectAsStateWithLifecycle(
         initialValue = com.imogen.android.backup.BackupStatus(
             pass = com.imogen.android.backup.PassState.Idle,
@@ -639,7 +639,7 @@ private fun titleFor(destination: Destination, overlay: Overlay): String = when 
 /** Ledger row to the shape the screen reads. */
 private fun asFailedUpload(record: com.imogen.android.backup.UploadRecord) =
     com.imogen.android.backup.FailedUpload(
-        accountId = record.accountId,
+        backupKey = record.backupKey,
         deviceAssetId = record.deviceAssetId,
         displayName = record.displayName,
         attempts = record.attempts,
@@ -659,11 +659,11 @@ private fun FailedUploadsPane(model: RootViewModel, contentPadding: PaddingValue
 
     com.imogen.android.ui.settings.FailedUploadsScreen(
         failures = rows.map(::asFailedUpload),
-        serverLabels = book?.accounts.orEmpty().associate { it.id to it.serverLabel },
+        serverLabels = book?.accounts.orEmpty().associate { it.backupKey to it.serverLabel },
         contentPadding = contentPadding,
         onRetry = { failure ->
             scope.launch {
-                ledger.clearAttempts(failure.accountId, failure.deviceAssetId)
+                ledger.clearAttempts(failure.backupKey, failure.deviceAssetId)
                 // Asking again is the point; waiting six hours for the periodic pass to
                 // notice would make the button look like it did nothing.
                 com.imogen.android.backup.BackupScheduler.runNow(

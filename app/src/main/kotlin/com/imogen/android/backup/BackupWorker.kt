@@ -42,7 +42,17 @@ class BackupWorker(
         val preferences = app.backupSettings.current()
         if (!preferences.enabled) return Result.success()
 
-        val destinations = app.accountStore.current().backingUpTo
+        val book = app.accountStore.current()
+        val ledger = BackupLedger.get(applicationContext).uploads()
+        val state = BackupState(applicationContext)
+        // Before anything reads the ledger: until this has run, the rows an earlier
+        // version wrote are filed under an id nothing asks about any more.
+        adoptStableKeys(book.accounts) { from, to ->
+            ledger.reassign(from, to)
+            state.rename(from, to)
+        }
+
+        val destinations = book.backingUpTo
         if (destinations.isEmpty()) return Result.success()
 
         // Before the scan, because MediaStore answers a query it will not serve with an
@@ -60,7 +70,6 @@ class BackupWorker(
         // the button look dead.
         setProgress(workDataOf(PROGRESS_SCANNING to true))
 
-        val ledger = BackupLedger.get(applicationContext).uploads()
         val media = withContext(Dispatchers.IO) {
             MediaScanner(applicationContext).scan(
                 includeVideos = preferences.includeVideos,
@@ -76,24 +85,24 @@ class BackupWorker(
         // Sets, because this is asked once per file per account: a list membership test
         // in there turns a four-thousand-photo roll into sixteen million comparisons.
         val outstanding = destinations.associate { account ->
-            val settled = ledger.doneFor(account.id).toMutableSet()
-            ledger.failuresFor(account.id)
+            val settled = ledger.doneFor(account.backupKey).toMutableSet()
+            ledger.failuresFor(account.backupKey)
                 .filter { it.attempts >= MAX_UPLOAD_ATTEMPTS }
                 .forEach { settled += it.deviceAssetId }
-            account.id to ordered.mapNotNull { it.deviceAssetId.takeIf { id -> id !in settled } }
-                .toSet()
+            account.backupKey to
+                ordered.mapNotNull { it.deviceAssetId.takeIf { id -> id !in settled } }.toSet()
         }
 
         val total = outstanding.values.sumOf { it.size }
         if (total == 0) {
-            BackupState(applicationContext).recordCompleted(
-                destinations.map { it.id },
+            state.recordCompleted(
+                destinations.map { it.backupKey },
                 System.currentTimeMillis(),
             )
             return Result.success()
         }
 
-        val ids = destinations.map { it.id }
+        val ids = destinations.map { it.backupKey }
         val totals = ids.map { outstanding.getValue(it).size }.toIntArray()
         val perAccount = IntArray(ids.size)
 
@@ -103,8 +112,8 @@ class BackupWorker(
 
         for (item in ordered) {
             for (account in destinations) {
-                if (item.deviceAssetId !in outstanding.getValue(account.id)) continue
-                if (account.id in signedOut) continue
+                if (item.deviceAssetId !in outstanding.getValue(account.backupKey)) continue
+                if (account.backupKey in signedOut) continue
                 if (isStopped) return Result.retry()
 
                 setProgress(
@@ -115,12 +124,12 @@ class BackupWorker(
                         PROGRESS_COMPLETED to completed,
                         PROGRESS_TOTAL to total,
                         PROGRESS_FILENAME to item.displayName,
-                        PROGRESS_ACCOUNT to account.id,
+                        PROGRESS_ACCOUNT to account.backupKey,
                     ),
                 )
                 setForegroundSafely(completed, total)
 
-                val slot = ids.indexOf(account.id)
+                val slot = ids.indexOf(account.backupKey)
                 when (upload(app.sessions.sessionFor(account), item, account)) {
                     UploadOutcome.Uploaded -> {
                         completed += 1
@@ -141,7 +150,7 @@ class BackupWorker(
                     // This account is done for until somebody signs in again, so nothing
                     // more is offered to it — but the others are untouched by it, and a
                     // second server must not stop backing up because the first forgot us.
-                    UploadOutcome.Unauthorized -> signedOut += account.id
+                    UploadOutcome.Unauthorized -> signedOut += account.backupKey
                 }
             }
             if (retryable) break
@@ -151,8 +160,7 @@ class BackupWorker(
 
         // The signed-out ones are emphatically not up to date, and stamping them would
         // have the screen report a time when everything was safely copied across.
-        BackupState(applicationContext)
-            .recordCompleted(ids.filterNot { it in signedOut }, System.currentTimeMillis())
+        state.recordCompleted(ids.filterNot { it in signedOut }, System.currentTimeMillis())
 
         // Failure rather than retry: backing off would only repeat the refusal on a timer,
         // and silently. This is the one outcome that waiting cannot mend.
@@ -168,7 +176,7 @@ class BackupWorker(
         account: Account,
     ): UploadOutcome {
         val ledger = BackupLedger.get(applicationContext).uploads()
-        val existing = ledger.failuresFor(account.id).firstOrNull {
+        val existing = ledger.failuresFor(account.backupKey).firstOrNull {
             it.deviceAssetId == item.deviceAssetId
         }
 
@@ -190,7 +198,7 @@ class BackupWorker(
 
             ledger.put(
                 UploadRecord(
-                    accountId = account.id,
+                    backupKey = account.backupKey,
                     deviceAssetId = item.deviceAssetId,
                     assetId = result.asset.id,
                     uploadedAt = System.currentTimeMillis(),
@@ -235,7 +243,7 @@ class BackupWorker(
         existing: UploadRecord?,
         message: String?,
     ) = UploadRecord(
-        accountId = account.id,
+        backupKey = account.backupKey,
         deviceAssetId = item.deviceAssetId,
         assetId = null,
         uploadedAt = System.currentTimeMillis(),

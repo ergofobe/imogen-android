@@ -29,8 +29,39 @@ data class Account(
 ) {
     /** What to call the server when there is no better name than its address. */
     val serverLabel: String
-        get() = serverUrl.substringAfter("://").substringBefore('/')
+        get() = serverLabelOf(serverUrl)
+
+    /**
+     * What the backup records key on: the identity the server and this device agree on,
+     * rather than [id].
+     *
+     * [id] is minted fresh for every account added and dies with the account row, so a
+     * sign-out followed by signing back in to the same account used to mint a second one
+     * — and with it a ledger that knew about none of the photographs already sent.
+     * `(serverUrl, userId)` is the pair `AccountStore.add` already treats as the real
+     * identity, and it is the same pair either side of a sign-out.
+     */
+    val backupKey: String
+        get() = backupKeyOf(serverUrl, userId)
 }
+
+/**
+ * The separator is unambiguous because a `userId` is a server-issued UUID and cannot
+ * contain one: [serverUrlOfBackupKey] takes everything before the *last* separator, so it
+ * recovers the address however odd the address itself is.
+ */
+private const val BACKUP_KEY_SEPARATOR = '|'
+
+fun backupKeyOf(serverUrl: String, userId: String): String =
+    "$serverUrl$BACKUP_KEY_SEPARATOR$userId"
+
+/** The address half of a backup key, or the whole of it when it is not one. */
+fun serverUrlOfBackupKey(backupKey: String): String =
+    backupKey.substringBeforeLast(BACKUP_KEY_SEPARATOR)
+
+/** What to call a server when there is no better name than its address. */
+fun serverLabelOf(serverUrl: String): String =
+    serverUrl.substringAfter("://").substringBefore('/')
 
 @Serializable
 data class TokenSet(
