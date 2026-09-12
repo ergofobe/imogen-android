@@ -88,6 +88,13 @@ fun Scrubber(
     // Read by the gesture, which outlives any one composition.
     val currentDay by rememberUpdatedState(day)
     val currentPosition by rememberUpdatedState(position)
+    val currentLayout by rememberUpdatedState(layout)
+    val currentOnScrubbing by rememberUpdatedState(onScrubbing)
+    val currentOnSeek by rememberUpdatedState(onSeek)
+
+    // A refresh landing mid-drag can hand over a shorter library than the one the thumb
+    // was last placed in.
+    val labelDay = dragDay.coerceIn(0, layout.index.buckets.lastIndex)
 
     val thumbHeight = 48.dp
     val thumbPx = with(density) { thumbHeight.toPx() }
@@ -166,7 +173,7 @@ fun Scrubber(
                 Modifier.background(MaterialTheme.colorScheme.primary, RoundedCornerShape(50)),
             ) {
                 Text(
-                    monthLabel(layout.index.buckets[dragDay].date),
+                    monthLabel(layout.index.buckets[labelDay].date),
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onPrimary,
                     maxLines = 1,
@@ -195,45 +202,54 @@ fun Scrubber(
                 .semantics {
                     contentDescription = "Scroll through time"
                 }
-                .pointerInput(layout) {
+                // Keyed on nothing, with the layout read through the snapshot above: a
+                // key that changes cancels the gesture's coroutine, and
+                // detectVerticalDragGestures calls neither onDragEnd nor onDragCancel on
+                // cancellation. A refresh landing under a held thumb left the timeline
+                // scrubbing for good.
+                .pointerInput(Unit) {
                     fun seekTo(fraction: Float) {
+                        val buckets = currentLayout.index.buckets
+                        if (buckets.isEmpty()) return
                         dragFraction = fraction.coerceIn(0f, 1f)
-                        val landing = layout.dayAtFraction(dragFraction)
-                        if (landing != dragDay) {
-                            // One tick per day crossed would buzz continuously across a
-                            // decade; per month is enough to feel the rail moving.
-                            if (monthOf(layout.index.buckets[landing].date) !=
-                                monthOf(layout.index.buckets[dragDay].date)
-                            ) {
-                                haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
-                            }
-                            dragDay = landing
+                        val landing = currentLayout.dayAtFraction(dragFraction)
+                        val previous = dragDay.coerceIn(0, buckets.lastIndex)
+                        // One tick per day crossed would buzz continuously across a
+                        // decade; per month is enough to feel the rail moving.
+                        if (landing != previous &&
+                            monthOf(buckets[landing].date) != monthOf(buckets[previous].date)
+                        ) {
+                            haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
                         }
-                        onSeek(landing)
+                        dragDay = landing
+                        currentOnSeek(landing)
                     }
 
                     detectVerticalDragGestures(
                         onDragStart = {
                             dragging = true
-                            onScrubbing(true)
+                            currentOnScrubbing(true)
                             haptics.performHapticFeedback(
                                 HapticFeedbackType.GestureThresholdActivate,
                             )
                             // Taken hold of where it is drawn — which mid-spring is not yet
                             // where the grid is — rather than snapped under the finger.
-                            dragDay = currentDay.coerceIn(0, layout.index.buckets.lastIndex)
+                            dragDay = currentDay.coerceIn(
+                                0,
+                                currentLayout.index.buckets.lastIndex,
+                            )
                             dragFraction = currentPosition
                         },
                         onDragEnd = {
                             dragging = false
-                            onScrubbing(false)
+                            currentOnScrubbing(false)
                             // Seek once more on release: the grid only fetches days when
                             // the drag stops, so this is the request that actually matters.
-                            onSeek(dragDay)
+                            currentOnSeek(dragDay)
                         },
                         onDragCancel = {
                             dragging = false
-                            onScrubbing(false)
+                            currentOnScrubbing(false)
                         },
                     ) { change, amount ->
                         change.consume()
