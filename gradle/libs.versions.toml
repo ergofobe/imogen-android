@@ -9,11 +9,20 @@
 agp = "8.13.2"
 kotlin = "2.2.20"
 ksp = "2.2.20-2.0.4"
-# Matches the version the SDK compiles against; two Ktor versions on one classpath is
-# a class-cast waiting to happen.
-ktor = "3.0.3"
-coroutines = "1.9.0"
-serialization = "1.7.3"
+# Ktor has no version here on purpose. The SDK exports `platform("io.ktor:ktor-bom")` as an
+# `api` dependency, so the version it was tested against is the version this app resolves,
+# and a number written here could only ever disagree with it — as this one did, sitting at
+# 3.0.3 while the SDK had moved to 3.5.2. The engine module still belongs to this app,
+# because the SDK deliberately leaves the engine to whoever uses it.
+#
+# These two are the versions Ktor drags onto the classpath, not a free choice: every
+# kotlinx module below them gets lifted by conflict resolution anyway, so anything else
+# written here is a dead letter. They are worth stating because the SDK only declares
+# floors (1.9.0 / 1.7.3), and the unit-test classpath does not necessarily resolve the
+# same graph as the app's. Check them after any SDK pin move with
+# `./gradlew :app:dependencies --configuration releaseRuntimeClasspath`.
+coroutines = "1.11.0"
+serialization = "1.11.0"
 
 coreKtx = "1.17.0"
 activityCompose = "1.11.0"
@@ -76,7 +85,7 @@ coil-network-okhttp = { module = "io.coil-kt.coil3:coil-network-okhttp", version
 
 zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 
-ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor" }
+ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
 
