@@ -99,11 +99,12 @@ class BackupWorker(
 
         var completed = 0
         var retryable = false
-        var signedOut = false
+        val signedOut = mutableSetOf<String>()
 
         for (item in ordered) {
             for (account in destinations) {
                 if (item.deviceAssetId !in outstanding.getValue(account.id)) continue
+                if (account.id in signedOut) continue
                 if (isStopped) return Result.retry()
 
                 setProgress(
@@ -137,22 +138,27 @@ class BackupWorker(
                         retryable = true
                         break
                     }
-                    // Backing off would only repeat the refusal on a timer, and silently.
-                    // The pass fails so that the screen can say the account needs signing
-                    // in again, which is the only thing that fixes it.
-                    UploadOutcome.Unauthorized -> {
-                        signedOut = true
-                        break
-                    }
+                    // This account is done for until somebody signs in again, so nothing
+                    // more is offered to it — but the others are untouched by it, and a
+                    // second server must not stop backing up because the first forgot us.
+                    UploadOutcome.Unauthorized -> signedOut += account.id
                 }
             }
-            if (retryable || signedOut) break
+            if (retryable) break
         }
 
-        if (signedOut) return Result.failure(workDataOf(RESULT_REASON to REASON_SIGNED_OUT))
         if (retryable) return Result.retry()
 
-        BackupState(applicationContext).recordCompleted(ids, System.currentTimeMillis())
+        // The signed-out ones are emphatically not up to date, and stamping them would
+        // have the screen report a time when everything was safely copied across.
+        BackupState(applicationContext)
+            .recordCompleted(ids.filterNot { it in signedOut }, System.currentTimeMillis())
+
+        // Failure rather than retry: backing off would only repeat the refusal on a timer,
+        // and silently. This is the one outcome that waiting cannot mend.
+        if (signedOut.isNotEmpty()) {
+            return Result.failure(workDataOf(RESULT_REASON to REASON_SIGNED_OUT))
+        }
         return Result.success()
     }
 
