@@ -6,7 +6,7 @@ import androidx.work.WorkInfo
 enum class WaitingReason { Network, Wifi, Charging, Soon }
 
 /** Why a pass gave up. */
-enum class FailureReason { MediaAccess, Unknown }
+enum class FailureReason { MediaAccess, SignedOut, Unknown }
 
 /**
  * What the pass as a whole is doing, as opposed to how far each destination has got.
@@ -30,10 +30,10 @@ sealed interface PassState {
                 Waiting(signals.waitingReason())
 
             WorkInfo.State.FAILED -> Failed(
-                if (signals.failureReason == BackupWorker.REASON_MEDIA_ACCESS) {
-                    FailureReason.MediaAccess
-                } else {
-                    FailureReason.Unknown
+                when (signals.failureReason) {
+                    BackupWorker.REASON_MEDIA_ACCESS -> FailureReason.MediaAccess
+                    BackupWorker.REASON_SIGNED_OUT -> FailureReason.SignedOut
+                    else -> FailureReason.Unknown
                 },
             )
 

@@ -148,6 +148,23 @@ class BackupStatusTest {
         )
     }
 
+    /**
+     * Kept apart from [FailureReason.Unknown] because the two want opposite words: one
+     * promises another attempt, and this one is the case where no attempt can help.
+     */
+    @Test
+    fun `a pass stopped by a dead grant says the account is signed out`() {
+        assertEquals(
+            PassState.Failed(FailureReason.SignedOut),
+            PassState.of(
+                signals(
+                    state = WorkInfo.State.FAILED,
+                    failureReason = BackupWorker.REASON_SIGNED_OUT,
+                ),
+            ),
+        )
+    }
+
     @Test
     fun `a failure with no reason recorded is still reported`() {
         assertEquals(
