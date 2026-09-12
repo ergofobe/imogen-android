@@ -99,6 +99,7 @@ class BackupWorker(
 
         var completed = 0
         var retryable = false
+        var signedOut = false
 
         for (item in ordered) {
             for (account in destinations) {
@@ -119,37 +120,47 @@ class BackupWorker(
                 setForegroundSafely(completed, total)
 
                 val slot = ids.indexOf(account.id)
-                when (val outcome = upload(app.sessions.sessionFor(account), item, account)) {
-                    Outcome.Uploaded -> {
+                when (upload(app.sessions.sessionFor(account), item, account)) {
+                    UploadOutcome.Uploaded -> {
                         completed += 1
                         perAccount[slot] += 1
                     }
                     // Counted as dealt with, because it will not be tried again. Leaving
                     // it out would strand the bar one short of its total for ever.
-                    Outcome.Rejected -> {
+                    UploadOutcome.Rejected -> {
                         completed += 1
                         perAccount[slot] += 1
                     }
                     // The server or the network is having a bad day. Stop pushing at it
                     // and let WorkManager's backoff decide when to come back.
-                    Outcome.Unavailable -> {
+                    UploadOutcome.Unavailable -> {
                         retryable = true
+                        break
+                    }
+                    // Backing off would only repeat the refusal on a timer, and silently.
+                    // The pass fails so that the screen can say the account needs signing
+                    // in again, which is the only thing that fixes it.
+                    UploadOutcome.Unauthorized -> {
+                        signedOut = true
                         break
                     }
                 }
             }
-            if (retryable) break
+            if (retryable || signedOut) break
         }
 
+        if (signedOut) return Result.failure(workDataOf(RESULT_REASON to REASON_SIGNED_OUT))
         if (retryable) return Result.retry()
 
         BackupState(applicationContext).recordCompleted(ids, System.currentTimeMillis())
         return Result.success()
     }
 
-    private enum class Outcome { Uploaded, Rejected, Unavailable }
-
-    private suspend fun upload(session: Session, item: LocalMedia, account: Account): Outcome {
+    private suspend fun upload(
+        session: Session,
+        item: LocalMedia,
+        account: Account,
+    ): UploadOutcome {
         val ledger = BackupLedger.get(applicationContext).uploads()
         val existing = ledger.failuresFor(account.id).firstOrNull {
             it.deviceAssetId == item.deviceAssetId
@@ -179,21 +190,21 @@ class BackupWorker(
                     uploadedAt = System.currentTimeMillis(),
                 ),
             )
-            Outcome.Uploaded
+            UploadOutcome.Uploaded
         } catch (error: ImogenException) {
-            // A rejection the server will keep making — a file type it will not take, a
-            // quota that is full — is recorded against this file. Anything transient is
-            // the server's problem, not this file's, and must not spend its attempts.
-            if (error.isRetryable || error.status == 0) {
-                Outcome.Unavailable
-            } else {
+            // Only a rejection the server will keep making — a file type it will not take,
+            // a quota that is full — belongs against this file. Anything transient is the
+            // server's problem and anything about the account is the account's, and
+            // neither must spend a photograph's attempts or its place in the backup.
+            val outcome = outcomeOf(error)
+            if (outcome == UploadOutcome.Rejected) {
                 ledger.put(failure(account, item, existing, describe(error)))
-                Outcome.Rejected
             }
+            outcome
         } catch (error: Exception) {
             val unreadable = error is java.io.IOException && item.path == null
             ledger.put(failure(account, item, existing, error.message ?: error.toString()))
-            if (unreadable) Outcome.Rejected else Outcome.Unavailable
+            if (unreadable) UploadOutcome.Rejected else UploadOutcome.Unavailable
         } finally {
             scratch?.delete()
         }
@@ -292,6 +303,7 @@ class BackupWorker(
         /** Why a pass gave up, on the output of a failed run. */
         const val RESULT_REASON = "reason"
         const val REASON_MEDIA_ACCESS = "media-access"
+        const val REASON_SIGNED_OUT = "signed-out"
 
         private const val CHANNEL = "backup"
         private const val NOTIFICATION_ID = 4201

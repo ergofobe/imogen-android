@@ -142,3 +142,40 @@ class PendingTest {
         assertEquals(pending, decoded)
     }
 }
+
+class TokenPrecedenceTest {
+
+    private fun tokens(accessToken: String, obtainedAt: Long) =
+        TokenSet(accessToken, "rt-$accessToken", obtainedAt, 3600, "library:read")
+
+    /**
+     * The regression that cost a grant: a backup pass reads the account once and hands
+     * that same copy to `sessionFor` for every file, so the copy goes stale the moment the
+     * pass refreshes. Taking it would put the retired refresh token back in play.
+     */
+    @Test
+    fun `an older token set does not displace the one in hand`() {
+        val held = tokens("new", obtainedAt = 2_000)
+        val stale = tokens("old", obtainedAt = 1_000)
+
+        assertEquals(held, newerOf(held, stale))
+    }
+
+    /** A fresh sign-in must still win, or the account would be stuck on dead tokens. */
+    @Test
+    fun `a newer token set is taken`() {
+        val held = tokens("old", obtainedAt = 1_000)
+        val signedInAgain = tokens("new", obtainedAt = 2_000)
+
+        assertEquals(signedInAgain, newerOf(held, signedInAgain))
+    }
+
+    /** Same instant, so neither is demonstrably newer: keep what is already in use. */
+    @Test
+    fun `a token set of the same age keeps the one in hand`() {
+        val held = tokens("held", obtainedAt = 1_000)
+        val offered = tokens("offered", obtainedAt = 1_000)
+
+        assertEquals(held, newerOf(held, offered))
+    }
+}

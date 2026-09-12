@@ -49,6 +49,19 @@ data class TokenSet(
         nowMillis >= obtainedAt + (expiresIn - skewSeconds).coerceAtLeast(0) * 1000
 }
 
+/**
+ * The later-issued of two token sets, keeping the one in hand when neither is newer.
+ *
+ * A [Session] is not the only writer of its own account: a copy read from the store before
+ * a refresh can arrive long after it, and taking that copy would put a refresh token the
+ * server has already rotated back in play. The server reads a second use of a rotated token
+ * as theft and revokes the whole family, which no retry recovers from — only signing in
+ * again does. Deciding on `obtainedAt` rather than simply refusing every incoming set keeps
+ * a genuine re-sign-in working, because its tokens really are newer.
+ */
+fun newerOf(held: TokenSet, offered: TokenSet): TokenSet =
+    if (offered.obtainedAt > held.obtainedAt) offered else held
+
 /** Everything the app persists, in one document, because it is written as one. */
 @Serializable
 data class AccountBook(

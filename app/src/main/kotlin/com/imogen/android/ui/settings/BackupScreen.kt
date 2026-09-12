@@ -256,6 +256,10 @@ private fun PassRow(pass: PassState) {
         // The missing-access row above says this one far better than a line here could.
         is PassState.Failed -> when (pass.reason) {
             FailureReason.MediaAccess -> null
+            // Named rather than folded into the line below, because this is the one
+            // failure that will not fix itself however many times the backup tries.
+            FailureReason.SignedOut ->
+                "This account is signed out. Sign in again to carry on backing up."
             FailureReason.Unknown -> "The last backup could not finish. It will try again."
         }
         PassState.Running, PassState.Idle -> null

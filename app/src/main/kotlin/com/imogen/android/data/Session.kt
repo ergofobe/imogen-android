@@ -16,6 +16,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
+import java.util.concurrent.atomic.AtomicReference
 import android.content.Context as AndroidContext
 
 /**
@@ -35,8 +36,12 @@ class Session(
     private val platformContext: PlatformContext,
     initial: Account,
 ) {
-    @Volatile
-    private var account: Account = initial
+    // Atomic rather than volatile: both writers read-modify-write it — a refresh replacing
+    // the tokens, `adopt` replacing everything else — and a plain assignment would let one
+    // of them land on top of the other's value rather than on top of its own read.
+    private val held = AtomicReference(initial)
+
+    private val account: Account get() = held.get()
 
     private val refreshLock = Mutex()
 
@@ -102,18 +107,32 @@ class Session(
     suspend fun accessToken(): String? {
         val current = account.tokens
         if (!current.isExpired(System.currentTimeMillis())) return current.accessToken
-        return forceRefresh() ?: current.accessToken
+        return renew(current.accessToken) ?: current.accessToken
     }
+
+    /**
+     * The SDK's 401 hook: the token it sent was refused, whatever this end believed about
+     * how long it had left.
+     *
+     * So this cannot ask whether the token looks expired before exchanging — that is the
+     * belief the server just contradicted, and checking it made a refusal of a
+     * still-young token unrecoverable: the same dead token went back out on every request
+     * until its local clock ran down.
+     */
+    suspend fun forceRefresh(): String? = renew(account.tokens.accessToken)
 
     /**
      * Exchanges the refresh token. Returns null when there is nothing to exchange or the
      * server refused, which means the grant is gone and the account needs signing in
      * again — the caller decides how loudly to say so.
+     *
+     * [refused] is the access token the caller found unusable. Another caller may have
+     * replaced it while this one waited for the lock, and that — rather than expiry — is
+     * what says the work is already done.
      */
-    suspend fun forceRefresh(): String? = refreshLock.withLock {
+    private suspend fun renew(refused: String?): String? = refreshLock.withLock {
         val current = account.tokens
-        // Another caller may have refreshed while this one waited for the lock.
-        if (!current.isExpired(System.currentTimeMillis())) return current.accessToken
+        if (current.accessToken != refused) return current.accessToken
         val refreshToken = current.refreshToken ?: return null
 
         val renewed = runCatching {
@@ -130,14 +149,23 @@ class Session(
             expiresIn = renewed.tokens.expiresIn,
             scope = renewed.tokens.scope.ifEmpty { current.scope },
         )
-        account = account.copy(tokens = tokens)
+        held.updateAndGet { it.copy(tokens = tokens) }
         store.update(accountId) { it.copy(tokens = tokens) }
         tokens.accessToken
     }
 
-    /** Called when the stored account changes underneath us — a rename, a backup toggle. */
+    /**
+     * Called when the stored account changes underneath us — a rename, a backup toggle.
+     *
+     * The caller's copy is authoritative about everything except the tokens, which it may
+     * well have read before this session refreshed them: a backup pass reads the account
+     * book once and then hands that same copy back for every file it uploads. Taking its
+     * tokens wholesale put an already-rotated refresh token back in play and cost the
+     * grant, so those are settled by [newerOf] instead.
+     */
     fun adopt(updated: Account) {
-        if (updated.id == accountId) account = updated
+        if (updated.id != accountId) return
+        held.updateAndGet { current -> updated.copy(tokens = newerOf(current.tokens, updated.tokens)) }
     }
 
     fun close() {
