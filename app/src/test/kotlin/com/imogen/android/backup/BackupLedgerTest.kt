@@ -97,19 +97,29 @@ class BackupLedgerTest {
     }
 
     @Test
-    fun `a file recorded under both keys survives being adopted`() = runTest {
-        // What a phone looks like if it signed out and back in before the fix: rows under
-        // the old local id, and rows a later pass wrote under the key. The primary key
-        // collides, and losing the row to it would re-upload the file.
-        val account = account("local-2")
-        uploads.put(uploaded("local-1", "asset-1"))
-        uploads.put(uploaded(account.backupKey, "asset-1"))
+    fun `a key collision keeps the row being moved, not the one it lands on`() = runTest {
+        // `update or replace` reads as though the destination wins. It does not: SQLite
+        // deletes the destination row and keeps the one being moved. Pinned here because
+        // the whole of `reassign`'s safety is that the destination is empty when it runs,
+        // and a future change that let it be non-empty would be discarding live rows —
+        // here, settling a photograph that had actually arrived.
+        val key = account("local-2").backupKey
+        uploads.put(
+            UploadRecord(
+                backupKey = "local-1",
+                deviceAssetId = "asset-1",
+                assetId = null,
+                uploadedAt = 1,
+                attempts = MAX_UPLOAD_ATTEMPTS,
+                lastError = "rejected",
+            ),
+        )
+        uploads.put(uploaded(key, "asset-1"))
 
-        adoptStableKeys(listOf(account.copy(id = "local-1"))) { from, to ->
-            uploads.reassign(from, to)
-        }
+        uploads.reassign("local-1", key)
 
-        assertEquals(listOf("asset-1"), uploads.doneFor(account.backupKey))
+        assertEquals(emptyList<String>(), uploads.doneFor(key))
+        assertEquals(listOf("asset-1"), uploads.failuresFor(key).map { it.deviceAssetId })
     }
 
     @Test

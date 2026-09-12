@@ -90,9 +90,14 @@ interface UploadDao {
      * Moves rows an earlier version wrote under a device-local account id onto the
      * account's stable key.
      *
-     * `or replace` because the destination may already hold a row for the same file: an
-     * account signed out and back in before this existed has rows under both keys, and the
-     * newer one — written under whichever key the pass was using — is the one to keep.
+     * `or replace` rather than a plain update because the primary key could collide, and
+     * a collision that aborts would leave the rows stranded under an id nothing asks
+     * about. Note which row wins: SQLite deletes the *destination* row and keeps the one
+     * being moved, which is the opposite of what "replace" suggests. That is safe only
+     * because `adoptStableKeys` runs before the pass writes anything, so the destination
+     * is empty every time this is called — not because the row it would discard does not
+     * matter. It does: discarding a success in favour of a stale failure would settle the
+     * file for ever and drop it out of the backup without saying so.
      */
     @Query("update or replace uploads set accountId = :to where accountId = :from")
     suspend fun reassign(from: String, to: String)
