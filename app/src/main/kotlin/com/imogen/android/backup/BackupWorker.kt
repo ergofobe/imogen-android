@@ -131,17 +131,11 @@ class BackupWorker(
         var retryable = false
         val signedOut = mutableSetOf<String>()
 
-        // Who the pass has found signed out so far, named the way a verdict names them.
-        fun signedOutLabels(): List<String> =
-            ids.indices.filter { ids[it] in signedOut }.map { labels[it] }
-
         for (item in ordered) {
             for (account in destinations) {
                 if (item.deviceAssetId !in outstanding.getValue(account.backupKey)) continue
                 if (account.backupKey in signedOut) continue
-                if (isStopped) {
-                    return retry(rowsOf(labels, totals, uploaded), signedOutLabels().toSet())
-                }
+                if (isStopped) return retry(uploadedKeys(ids, uploaded), signedOut)
 
                 setProgress(
                     workDataOf(
@@ -184,7 +178,7 @@ class BackupWorker(
             if (retryable) break
         }
 
-        if (retryable) return retry(rowsOf(labels, totals, uploaded), signedOutLabels().toSet())
+        if (retryable) return retry(uploadedKeys(ids, uploaded), signedOut)
 
         // The signed-out ones are emphatically not up to date, and stamping them would
         // have the screen report a time when everything was safely copied across.
@@ -196,7 +190,12 @@ class BackupWorker(
         if (signedOut.isNotEmpty()) {
             return finish(
                 Result.failure(workDataOf(RESULT_REASON to REASON_SIGNED_OUT)),
-                PassNotice.Failed(FailureReason.SignedOut, signedOutLabels(), sent),
+                PassNotice.Failed(
+                    FailureReason.SignedOut,
+                    ids.indices.filter { ids[it] in signedOut }.map { labels[it] },
+                    sent,
+                    signedOut.toSet(),
+                ),
             )
         }
 
@@ -269,10 +268,14 @@ class BackupWorker(
      * signed us out — so the parts of the standing verdict it has disproved go, and the
      * rest stands rather than being reposted or re-alerted through the backoff.
      */
-    private fun retry(sent: List<DestinationProgress>, signedOutNow: Set<String>): Result {
-        BackupNotifications.retire(applicationContext, disprovedByRetry(sent, signedOutNow))
+    private fun retry(uploadedTo: Set<String>, signedOutNow: Set<String>): Result {
+        BackupNotifications.retire(applicationContext, disprovedByRetry(uploadedTo, signedOutNow))
         return Result.retry()
     }
+
+    /** The accounts that took at least one file, named the way a claim names them. */
+    private fun uploadedKeys(ids: List<String>, uploaded: IntArray): Set<String> =
+        ids.indices.filter { uploaded[it] > 0 }.map { ids[it] }.toSet()
 
     private fun rowsOf(
         labels: List<String>,

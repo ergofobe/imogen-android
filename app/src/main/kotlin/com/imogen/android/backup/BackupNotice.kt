@@ -24,6 +24,14 @@ sealed interface PassNotice {
         val reason: FailureReason,
         val servers: List<String>,
         val sent: List<DestinationProgress> = emptyList(),
+        /**
+         * The accounts [servers] names, by `Account.backupKey` — what a later pass
+         * matches its evidence against. Not the labels: a label takes an email only
+         * while two destinations share a server, so adding a second account there
+         * changes the wording without changing the account the verdict is about. Left
+         * empty, the verdict claims nothing and stands until a pass ends.
+         */
+        val signedOutKeys: Set<String> = emptySet(),
     ) : PassNotice
 }
 
@@ -114,31 +122,27 @@ fun verdictClaims(notice: PassNotice): Set<String> = when (notice) {
     is PassNotice.Finished -> emptySet()
     is PassNotice.Failed -> when (notice.reason) {
         FailureReason.MediaAccess -> setOf(MEDIA_UNREADABLE)
-        // A sign-out that names no server is a claim about nothing in particular, and
+        // A sign-out that names no account is a claim about nothing in particular, and
         // nothing in particular can disprove it.
-        FailureReason.SignedOut -> notice.servers.map(::signedOutOf).toSet()
+        FailureReason.SignedOut -> notice.signedOutKeys.map(::signedOutOf).toSet()
         FailureReason.Unknown -> setOf(NOT_CHECKABLE)
     }
 }
 
 /**
- * What a pass has disproved by the time it gives up and asks for a retry.
+ * What a pass has disproved by the time it gives up and asks for a retry, by backup key.
  *
  * Called from inside the upload loop, which is what makes the first token true: reaching
  * it at all means MediaStore answered. An upload the server accepted means that account
  * is not signed out, whatever went wrong afterwards — and a server that could not be
- * reached says nothing either way, so a destination that sent nothing disproves nothing.
+ * reached says nothing either way, so an account that sent nothing disproves nothing.
  *
- * [signedOutNow] is what this pass found for itself, and it overrides the uploads. A
- * token that expires part way through leaves both behind — five files in, then a 401 —
+ * [signedOutNow] is what this pass found for itself, and it overrides the uploads: a
+ * token that expires part way through leaves both behind, five files in and then a 401,
  * and the newer of the two is the one that is still true.
  */
-fun disprovedByRetry(
-    sent: List<DestinationProgress>,
-    signedOutNow: Set<String>,
-): Set<String> = setOf(MEDIA_UNREADABLE) +
-    sent.filter { it.completed > 0 && it.label !in signedOutNow }
-        .map { signedOutOf(it.label) }
+fun disprovedByRetry(uploadedTo: Set<String>, signedOutNow: Set<String>): Set<String> =
+    setOf(MEDIA_UNREADABLE) + (uploadedTo - signedOutNow).map(::signedOutOf)
 
 /**
  * Whether every claim a standing verdict makes has been disproved.
