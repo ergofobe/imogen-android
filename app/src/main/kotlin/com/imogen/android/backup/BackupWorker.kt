@@ -9,7 +9,6 @@ import com.imogen.android.ImogenApplication
 import com.imogen.android.data.Account
 import com.imogen.android.data.Session
 import com.imogen.sdk.AssetUploadMetadata
-import com.imogen.sdk.ImogenException
 import com.imogen.sdk.UploadOptions
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -202,22 +201,25 @@ class BackupWorker(
         return finish(Result.success(), finishedNotice(sent))
     }
 
+    /**
+     * The sending only. What the attempt means for the ledger is [recordUpload], which is
+     * a plain function so that a test can drive it — a `CoroutineWorker` cannot be.
+     */
     private suspend fun upload(
         session: Session,
         item: LocalMedia,
         account: Account,
-    ): UploadOutcome {
-        val ledger = BackupLedger.get(applicationContext).uploads()
-        val existing = ledger.failuresFor(account.backupKey).firstOrNull {
-            it.deviceAssetId == item.deviceAssetId
-        }
-
+    ): UploadOutcome = recordUpload(
+        BackupLedger.get(applicationContext).uploads(),
+        account,
+        item,
+    ) {
         var scratch: File? = null
-        return try {
+        try {
             val file = item.path?.let(::File)?.takeIf { it.canRead() }
                 ?: copyToCache(item).also { scratch = it }
 
-            val result = session.client.assets.upload(
+            session.client.assets.upload(
                 file,
                 UploadOptions(
                     metadata = AssetUploadMetadata(
@@ -226,63 +228,11 @@ class BackupWorker(
                         filename = item.displayName,
                     ),
                 ),
-            )
-
-            ledger.put(
-                UploadRecord(
-                    backupKey = account.backupKey,
-                    deviceAssetId = item.deviceAssetId,
-                    assetId = result.asset.id,
-                    uploadedAt = System.currentTimeMillis(),
-                ),
-            )
-            UploadOutcome.Uploaded
-        } catch (error: ImogenException) {
-            // Only a rejection the server will keep making — a file type it will not take,
-            // a quota that is full — belongs against this file. Anything transient is the
-            // server's problem and anything about the account is the account's, and
-            // neither must spend a photograph's attempts or its place in the backup.
-            val outcome = outcomeOf(error)
-            if (outcome == UploadOutcome.Rejected) {
-                ledger.put(failure(account, item, existing, describe(error)))
-            }
-            outcome
-        } catch (error: Exception) {
-            val unreadable = error is java.io.IOException && item.path == null
-            ledger.put(failure(account, item, existing, error.message ?: error.toString()))
-            if (unreadable) UploadOutcome.Rejected else UploadOutcome.Unavailable
+            ).asset.id
         } finally {
             scratch?.delete()
         }
     }
-
-    /**
-     * The server names the offending fields in `details`; the sentence on its own says
-     * only that something was wrong. A ledger full of "the request did not match what
-     * this endpoint expects" identifies nothing, which is how every upload came to be
-     * failing without anybody being able to say why.
-     */
-    private fun describe(error: ImogenException): String {
-        val fields = error.details.orEmpty()
-            .entries
-            .joinToString("; ") { (field, messages) -> "$field: ${messages.joinToString(", ")}" }
-        return if (fields.isEmpty()) error.message else "${error.message} ($fields)"
-    }
-
-    private fun failure(
-        account: Account,
-        item: LocalMedia,
-        existing: UploadRecord?,
-        message: String?,
-    ) = UploadRecord(
-        backupKey = account.backupKey,
-        deviceAssetId = item.deviceAssetId,
-        assetId = null,
-        uploadedAt = System.currentTimeMillis(),
-        attempts = (existing?.attempts ?: 0) + 1,
-        lastError = message,
-        displayName = item.displayName,
-    )
 
     /**
      * For media whose real path MediaStore will not give up — anything on a volume the

@@ -69,6 +69,49 @@ class FailedUploadsTest {
         assertEquals(2, summary.givenUp)
     }
 
+    /**
+     * `failures()` spans every key the ledger has ever held; a pass only visits the
+     * accounts in the book. A row left by an account since signed out can never be
+     * retried, and it sat there counting against the backup for ever.
+     */
+    @Test
+    fun `a row belonging to an account that is gone is not listed`() {
+        val mine = failure()
+        val orphan = failure().copy(backupKey = "https://old.example.com|user-9")
+
+        assertEquals(listOf(mine), reachable(listOf(mine, orphan), setOf(mine.backupKey)))
+    }
+
+    @Test
+    fun `a row an old version keyed on a device-local id is not listed`() {
+        // `adoptStableKeys` only knows accounts still in the book, so one of these left by
+        // an account that has gone is unreachable — and renders its raw UUID where the
+        // server's name belongs.
+        val stale = failure().copy(backupKey = "0f3c1a52-8e44-4e2c-9a0c-1d7f0c3b9a11")
+
+        assertEquals(
+            emptyList<FailedUpload>(),
+            reachable(listOf(stale), setOf(failure().backupKey)),
+        )
+    }
+
+    @Test
+    fun `a row belonging to an account whose backup is switched off is not listed`() {
+        // A pass visits `backingUpTo`, not every account in the book, so these carry the
+        // same "Try again" that nothing would honour.
+        val paused = failure()
+
+        assertEquals(emptyList<FailedUpload>(), reachable(listOf(paused), emptySet()))
+    }
+
+    @Test
+    fun `hidden rather than deleted, so signing back in brings the rows back`() {
+        val row = failure()
+
+        assertEquals(emptyList<FailedUpload>(), reachable(listOf(row), emptySet()))
+        assertEquals(listOf(row), reachable(listOf(row), setOf(row.backupKey)))
+    }
+
     @Test
     fun `retrying resets the attempt count so the worker stops skipping the file`() {
         // The worker decides what to skip from `attempts`, so anything short of zeroing it

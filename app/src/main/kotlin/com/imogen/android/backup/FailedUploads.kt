@@ -30,6 +30,28 @@ data class FailedUpload(
     val name: String get() = displayName ?: deviceAssetId
 }
 
+/**
+ * The failures a backup pass can still reach.
+ *
+ * The ledger keeps every row it has ever written, across every key; a pass visits only
+ * `AccountBook.backingUpTo`. So rows left behind by an account that has since been signed
+ * out — the default, because `forgetBackups` is off and those rows are what lets signing
+ * back in resume instead of re-uploading the roll — name a destination nothing owns any
+ * more. Nothing retries them, "Try again" cannot reach them, and they sat on the screen
+ * inflating the count for ever. Rows an old version keyed on a device-local account id
+ * are the same case: `adoptStableKeys` only knows accounts still in the book, so those
+ * are unreachable too, and render the bare UUID where the server's name goes.
+ *
+ * [backingUpTo] rather than every account in the book, because an account still signed in
+ * with its backup switched off is visited by no pass either, and its rows would carry the
+ * same "Try again" that does nothing.
+ *
+ * Hidden rather than deleted, in every case. The destination may well come back — signed
+ * into again, or simply switched back on — and its rows are correct the moment it does.
+ */
+fun reachable(failures: List<FailedUpload>, backingUpTo: Set<String>): List<FailedUpload> =
+    failures.filter { it.backupKey in backingUpTo }
+
 data class FailureSummary(val willRetry: Int, val givenUp: Int) {
     val total: Int get() = willRetry + givenUp
 }
