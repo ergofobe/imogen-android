@@ -43,7 +43,7 @@ class BackupWorker(
         // shown: "it could not finish" is what somebody reports, and the throwable is
         // the only thing that says why.
         Log.e(TAG, "backup pass failed", error)
-        stopped(FailureReason.Unknown)
+        finish(Result.failure(), PassNotice.Failed(FailureReason.Unknown, emptyList()))
     }
 
     private suspend fun pass(): Result {
@@ -71,7 +71,10 @@ class BackupWorker(
         if (MediaPermission.check(applicationContext, preferences.includeVideos) ==
             MediaAccess.Denied
         ) {
-            return stopped(FailureReason.MediaAccess)
+            return finish(
+                Result.failure(workDataOf(RESULT_REASON to REASON_MEDIA_ACCESS)),
+                PassNotice.Failed(FailureReason.MediaAccess, emptyList()),
+            )
         }
 
         // Said before the scan rather than after it: reading several thousand MediaStore
@@ -181,21 +184,27 @@ class BackupWorker(
         // have the screen report a time when everything was safely copied across.
         state.recordCompleted(ids.filterNot { it in signedOut }, System.currentTimeMillis())
 
-        // Not a retry: backing off would only repeat the refusal on a timer, and silently.
-        // Not a failure either — see [verdictFor]. Whatever the other destinations took is
-        // carried into the notice, because a server signing us out does not unsend it.
+        // Failure rather than retry: backing off would only repeat the refusal on a timer,
+        // and silently. This is the one outcome that waiting cannot mend.
         val sent = rowsOf(labels, totals, uploaded)
         if (signedOut.isNotEmpty()) {
-            return stopped(
-                FailureReason.SignedOut,
-                servers = ids.indices.filter { ids[it] in signedOut }.map { labels[it] },
-                sent = sent,
+            return finish(
+                Result.failure(workDataOf(RESULT_REASON to REASON_SIGNED_OUT)),
+                PassNotice.Failed(
+                    FailureReason.SignedOut,
+                    ids.indices.filter { ids[it] in signedOut }.map { labels[it] },
+                    sent,
+                ),
             )
         }
 
         return finish(Result.success(), finishedNotice(sent))
     }
 
+    /**
+     * The sending only. What the attempt means for the ledger is [recordUpload], which is
+     * a plain function so that a test can drive it — a `CoroutineWorker` cannot be.
+     */
     private suspend fun upload(
         session: Session,
         item: LocalMedia,
@@ -243,25 +252,12 @@ class BackupWorker(
     /**
      * Every way a pass can end goes through here, so the shade is never left holding the
      * last pass's verdict — "signed out of family.example.org" outliving the sign-in that
-     * put it right was the whole of that bug. Being stopped part-way is not an ending and
-     * does not.
+     * put it right was the whole of that bug. A retry is not an ending and does not.
      */
     private fun finish(result: Result, notice: PassNotice? = null): Result {
         BackupNotifications.settle(applicationContext, notice)
         return result
     }
-
-    /**
-     * The one way a pass gives up, so the verdict WorkManager is handed and the sentence
-     * the shade is left holding are chosen together and cannot drift apart. They had:
-     * every exit returned `Result.failure()`, which cancels a periodic schedule outright,
-     * under a notice that promised another attempt.
-     */
-    private fun stopped(
-        reason: FailureReason,
-        servers: List<String> = emptyList(),
-        sent: List<DestinationProgress> = emptyList(),
-    ): Result = finish(verdictFor(reason), PassNotice.Failed(reason, servers, sent))
 
     private fun rowsOf(
         labels: List<String>,

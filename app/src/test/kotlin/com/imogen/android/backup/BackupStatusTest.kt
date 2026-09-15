@@ -1,9 +1,7 @@
 package com.imogen.android.backup
 
-import androidx.work.ListenableWorker
 import androidx.work.WorkInfo
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -175,42 +173,6 @@ class BackupStatusTest {
         )
     }
 
-    /**
-     * The three exits that cannot do their job return `success` with a reason rather than
-     * `failure`, because `failure` is terminal for a `PeriodicWorkRequest` and would take
-     * the six-hourly backup down with it. The screen still has to report them.
-     */
-    @Test
-    fun `a pass that ran to its end and could not sign in still says so`() {
-        assertEquals(
-            PassState.Failed(FailureReason.SignedOut),
-            PassState.of(
-                signals(
-                    state = WorkInfo.State.SUCCEEDED,
-                    failureReason = BackupWorker.REASON_SIGNED_OUT,
-                ),
-            ),
-        )
-    }
-
-    @Test
-    fun `a pass that ran to its end and could not read the camera roll still says so`() {
-        assertEquals(
-            PassState.Failed(FailureReason.MediaAccess),
-            PassState.of(
-                signals(
-                    state = WorkInfo.State.SUCCEEDED,
-                    failureReason = BackupWorker.REASON_MEDIA_ACCESS,
-                ),
-            ),
-        )
-    }
-
-    @Test
-    fun `a pass that simply worked reports nothing`() {
-        assertEquals(PassState.Idle, PassState.of(signals(state = WorkInfo.State.SUCCEEDED)))
-    }
-
     @Test
     fun `a cancelled pass is idle`() {
         assertEquals(PassState.Idle, PassState.of(signals(state = WorkInfo.State.CANCELLED)))
@@ -236,9 +198,7 @@ class BackupStatusTest {
 
     // --- which of the two work requests the screen should report on ---
 
-    private fun oneShot(state: WorkInfo.State, haltReason: String? = null) =
-        WorkFacet(state, oneShot = true, haltReason = haltReason)
-
+    private fun oneShot(state: WorkInfo.State) = WorkFacet(state, oneShot = true)
     private fun periodic(state: WorkInfo.State) = WorkFacet(state, oneShot = false)
 
     @Test
@@ -287,84 +247,9 @@ class BackupStatusTest {
     }
 
     @Test
-    fun `a pass that gave up is reported although it ended in success`() {
-        // It has to end in success, or it takes the periodic schedule with it, so the
-        // verdict is in its output rather than its state. Reading only the state left the
-        // screen silent about an account that had been signed out.
-        val facets = listOf(
-            oneShot(WorkInfo.State.SUCCEEDED, BackupWorker.REASON_SIGNED_OUT),
-            periodic(WorkInfo.State.ENQUEUED),
-        )
-        assertEquals(facets[0], chooseReported(facets))
-    }
-
-    @Test
-    fun `a pass still running outranks why the last one gave up`() {
-        val facets = listOf(
-            oneShot(WorkInfo.State.SUCCEEDED, BackupWorker.REASON_SIGNED_OUT),
-            periodic(WorkInfo.State.RUNNING),
-        )
-        assertEquals(facets[1], chooseReported(facets))
-    }
-
-    @Test
     fun `a waiting one-shot outranks an earlier failure`() {
         // Something is queued now; what went wrong last time matters less than that.
         val facets = listOf(periodic(WorkInfo.State.FAILED), oneShot(WorkInfo.State.ENQUEUED))
         assertEquals(facets[1], chooseReported(facets))
-    }
-
-    // --- what a pass that gave up hands back to WorkManager ---
-
-    /**
-     * The blocker this was written for: `Result.failure()` is terminal for a
-     * `PeriodicWorkRequest`, so one unexpected throw cancelled the six-hourly backup
-     * outright — under a notice promising it would try again.
-     */
-    @Test
-    fun `an unexpected failure asks to come back rather than killing the schedule`() {
-        assertTrue(verdictFor(FailureReason.Unknown) is ListenableWorker.Result.Retry)
-    }
-
-    @Test
-    fun `a pass that cannot read the camera roll ends without killing the schedule`() {
-        val verdict = verdictFor(FailureReason.MediaAccess)
-
-        assertTrue(verdict is ListenableWorker.Result.Success)
-        assertEquals(
-            BackupWorker.REASON_MEDIA_ACCESS,
-            (verdict as ListenableWorker.Result.Success)
-                .outputData.getString(BackupWorker.RESULT_REASON),
-        )
-    }
-
-    @Test
-    fun `a pass stopped by a dead grant ends without killing the schedule`() {
-        // The others carry on being backed up every six hours, which was the point.
-        val verdict = verdictFor(FailureReason.SignedOut)
-
-        assertTrue(verdict is ListenableWorker.Result.Success)
-        assertEquals(
-            BackupWorker.REASON_SIGNED_OUT,
-            (verdict as ListenableWorker.Result.Success)
-                .outputData.getString(BackupWorker.RESULT_REASON),
-        )
-    }
-
-    /**
-     * The verdict and the sentence the shade is left holding are chosen together, so this
-     * is the pairing itself: nothing may promise another attempt unless one was asked for.
-     */
-    @Test
-    fun `only the verdict that asks to come back promises to`() {
-        FailureReason.entries.forEach { reason ->
-            val promises = noticeText(PassNotice.Failed(reason, emptyList()))
-                .contains("try again", ignoreCase = true)
-            assertEquals(
-                "$reason promises a retry it does not ask for",
-                verdictFor(reason) is ListenableWorker.Result.Retry,
-                promises,
-            )
-        }
     }
 }

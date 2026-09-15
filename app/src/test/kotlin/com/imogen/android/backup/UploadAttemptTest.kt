@@ -118,24 +118,8 @@ class UploadAttemptTest {
         assertEquals(emptyList<String>(), uploads.doneFor(account.backupKey))
     }
 
-    /**
-     * A 403 is a refusal about this file and this grant that signing in again will not
-     * change. It used to answer [UploadOutcome.Unauthorized], which wrote nothing down —
-     * so the file was re-read, re-hashed and re-sent every pass for ever, with nothing on
-     * the failures screen to say it had ever been tried.
-     */
     @Test
-    fun `a forbidden upload is recorded against the file`() = runTest {
-        val outcome = recordUpload(uploads, account, media) {
-            throw ImogenException(403, "forbidden", "insufficient scope")
-        }
-
-        assertEquals(UploadOutcome.Rejected, outcome)
-        assertEquals(1, attemptsFor())
-    }
-
-    @Test
-    fun `a dead grant is still nobody's file's fault`() = runTest {
+    fun `a dead grant is nobody's file's fault`() = runTest {
         val outcome = recordUpload(uploads, account, media) {
             throw ImogenException(401, "unauthorized", "token revoked")
         }

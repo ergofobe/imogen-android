@@ -86,8 +86,8 @@ object BackupScheduler {
             manager.getWorkInfosForUniqueWorkFlow(ONE_SHOT),
             manager.getWorkInfosForUniqueWorkFlow(PERIODIC),
         ) { oneShot, periodic ->
-            val pairs = oneShot.map { WorkFacet(it.state, true, it.haltReason()) to it } +
-                periodic.map { WorkFacet(it.state, false, it.haltReason()) to it }
+            val pairs = oneShot.map { WorkFacet(it.state, oneShot = true) to it } +
+                periodic.map { WorkFacet(it.state, oneShot = false) to it }
             chooseReported(pairs.map { it.first })
                 ?.let { chosen -> pairs.first { it.first == chosen }.second }
         }
@@ -140,10 +140,6 @@ object BackupScheduler {
             )
         }
     }
-
-    /** Why a pass gave up, on a pass that ran to its end and did. */
-    private fun WorkInfo.haltReason(): String? =
-        outputData.getString(BackupWorker.RESULT_REASON)
 
     private fun capabilities(context: Context): NetworkCapabilities? =
         context.getSystemService(ConnectivityManager::class.java)

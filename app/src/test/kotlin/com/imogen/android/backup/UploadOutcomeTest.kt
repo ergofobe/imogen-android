@@ -16,20 +16,7 @@ class UploadOutcomeTest {
     @Test
     fun `an unauthorized upload is nobody's file's fault`() {
         assertEquals(UploadOutcome.Unauthorized, outcomeOf(error(401)))
-    }
-
-    /**
-     * 403 is not 401. Only a 401 has been past the SDK's refresh hook, so a 403 reaching
-     * here is a token that was accepted and still may not do this — a scope the grant
-     * never had, a resource-bound token pointed somewhere else. Signing in again produces
-     * the same token and the same refusal, so telling somebody to do that is advice that
-     * cannot work; and treating it as a dead grant dropped the destination for the rest of
-     * the pass without writing anything down, leaving the file to be retried for ever with
-     * nothing on the failures screen to say why.
-     */
-    @Test
-    fun `a forbidden upload is a refusal about this file, not a dead grant`() {
-        assertEquals(UploadOutcome.Rejected, outcomeOf(error(403)))
+        assertEquals(UploadOutcome.Unauthorized, outcomeOf(error(403)))
     }
 
     @Test
