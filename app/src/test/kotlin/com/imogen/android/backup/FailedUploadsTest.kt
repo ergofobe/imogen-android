@@ -96,6 +96,15 @@ class FailedUploadsTest {
     }
 
     @Test
+    fun `a row belonging to an account whose backup is switched off is not listed`() {
+        // A pass visits `backingUpTo`, not every account in the book, so these carry the
+        // same "Try again" that nothing would honour.
+        val paused = failure()
+
+        assertEquals(emptyList<FailedUpload>(), reachable(listOf(paused), emptySet()))
+    }
+
+    @Test
     fun `hidden rather than deleted, so signing back in brings the rows back`() {
         val row = failure()
 

@@ -151,6 +151,31 @@ class UploadAttemptTest {
         assertEquals(2, attemptsFor())
     }
 
+    /**
+     * The other door into the same hole. The SDK cannot replay a multipart body, so it
+     * rethrows a dropped connection untouched — it arrives here as a plain IOException,
+     * not as an ImogenException, and used to be filed against the photograph. Three flaky
+     * passes and the file was settled out of the backup for good.
+     */
+    @Test
+    fun `a dropped connection does not spend the photograph's attempts`() = runTest {
+        alreadyFailed(attempts = 2)
+
+        val outcome = recordUpload(uploads, account, media) {
+            throw java.io.IOException("connection reset")
+        }
+
+        assertEquals(UploadOutcome.Unavailable, outcome)
+        assertEquals(2, attemptsFor())
+    }
+
+    @Test
+    fun `a dropped connection on a file never tried writes no row at all`() = runTest {
+        recordUpload(uploads, account, media) { throw java.io.IOException("connection reset") }
+
+        assertEquals(emptyList<UploadRecord>(), uploads.failuresFor(account.backupKey))
+    }
+
     @Test
     fun `a file that cannot be read is not going to become readable on a timer`() = runTest {
         val unreadable = media.copy(path = null)
