@@ -37,6 +37,17 @@ class BackupNotificationTest {
     private val finished =
         finishedNotice(listOf(DestinationProgress("photos.example.com", 484, 484)))!!
 
+    // What a claim is about is the account's backup key; the label beside it is only
+    // what the notice says.
+    private val photosKey = "https://photos.example.com|user-a"
+    private val familyKey = "https://family.example.org|user-b"
+
+    private fun signedOutOf(vararg servers: Pair<String, String>) = PassNotice.Failed(
+        FailureReason.SignedOut,
+        servers.map { it.second },
+        signedOutKeys = servers.map { it.first }.toSet(),
+    )
+
     private fun showing() = shadowOf(manager).activeNotifications
         .single { it.id == BackupNotifications.RESULT_ID }
         .notification
@@ -88,7 +99,7 @@ class BackupNotificationTest {
 
     @Test
     fun `the result is on a channel of its own, so it can be turned off separately`() {
-        val notice = PassNotice.Failed(FailureReason.SignedOut, listOf("photos.example.com"))
+        val notice = signedOutOf(photosKey to "photos.example.com")
 
         val notification = BackupNotifications.result(context, notice)
 
@@ -144,7 +155,7 @@ class BackupNotificationTest {
 
         BackupNotifications.settle(
             context,
-            PassNotice.Failed(FailureReason.SignedOut, listOf("family.example.org")),
+            signedOutOf(familyKey to "family.example.org"),
         )
 
         // The whole point of the result channel: the verdict that needs acting on must
@@ -161,13 +172,98 @@ class BackupNotificationTest {
 
     @Test
     fun `a failure with nothing to add can still be read in full`() {
-        val stopped = PassNotice.Failed(FailureReason.SignedOut, listOf("family.example.org"))
+        val stopped = signedOutOf(familyKey to "family.example.org")
 
         val notification = BackupNotifications.result(context, stopped)
 
         assertEquals(
             noticeText(stopped),
             notification.extras.getString(Notification.EXTRA_BIG_TEXT),
+        )
+    }
+
+    // A retrying pass. It has no verdict of its own — it has not ended — so the only
+    // thing it may do to the shade is take down what it has proved wrong.
+
+    @Test
+    fun `a retry takes down a sign-out it has disproved`() {
+        BackupNotifications.settle(context, signedOutOf(photosKey to "photos.example.com"))
+
+        BackupNotifications.retire(context, disprovedByRetry(setOf(photosKey), signedOutNow = emptySet()))
+
+        assertEquals(emptyList<Int>(), shadowOf(manager).activeNotifications.map { it.id })
+    }
+
+    @Test
+    fun `a retry that disproves nothing leaves the verdict, and the repeat stays quiet`() {
+        val stopped = signedOutOf(photosKey to "photos.example.com")
+        BackupNotifications.settle(context, stopped)
+
+        // Unreachable on the first file, so nothing got through and nothing is disproved.
+        BackupNotifications.retire(context, disprovedByRetry(emptySet(), signedOutNow = emptySet()))
+        BackupNotifications.settle(context, stopped)
+
+        // The half that must not regress. #21's rule turns on what the shade is already
+        // holding, so a retry that cleared it would have a flaky network alert somebody
+        // about the same sign-out on every backoff cycle.
+        assertNotEquals(0, showing().flags and Notification.FLAG_ONLY_ALERT_ONCE)
+    }
+
+    @Test
+    fun `a retry does not take down a sign-out this very pass found again`() {
+        val stopped = signedOutOf(photosKey to "photos.example.com")
+        BackupNotifications.settle(context, stopped)
+
+        // The token expired part way through: the uploads got in before the 401, and the
+        // pass is carrying fresh proof that the account is signed out after all.
+        BackupNotifications.retire(
+            context,
+            disprovedByRetry(setOf(photosKey), signedOutNow = setOf(photosKey)),
+        )
+
+        assertTrue(
+            showing().extras.getString(Notification.EXTRA_TEXT).orEmpty()
+                .contains("photos.example.com"),
+        )
+    }
+
+    @Test
+    fun `a retry leaves a verdict it has only half disproved`() {
+        BackupNotifications.settle(
+            context,
+            signedOutOf(photosKey to "photos.example.com", familyKey to "family.example.org"),
+        )
+
+        BackupNotifications.retire(context, disprovedByRetry(setOf(photosKey), signedOutNow = emptySet()))
+
+        // The other one is still signed out, and that is still the thing to act on.
+        assertTrue(
+            showing().extras.getString(Notification.EXTRA_TEXT).orEmpty()
+                .contains("family.example.org"),
+        )
+    }
+
+    @Test
+    fun `a verdict a retry retired alerts when it comes back`() {
+        val stopped = signedOutOf(photosKey to "photos.example.com")
+        BackupNotifications.settle(context, stopped)
+        BackupNotifications.retire(context, disprovedByRetry(setOf(photosKey), signedOutNow = emptySet()))
+
+        BackupNotifications.settle(context, stopped)
+
+        // Signed in, then signed out again, is news rather than a repeat.
+        assertEquals(0, showing().flags and Notification.FLAG_ONLY_ALERT_ONCE)
+    }
+
+    @Test
+    fun `a retry does not take down a finished verdict`() {
+        BackupNotifications.settle(context, finished)
+
+        BackupNotifications.retire(context, disprovedByRetry(setOf(photosKey), signedOutNow = emptySet()))
+
+        assertEquals(
+            noticeTitle(finished),
+            showing().extras.getString(Notification.EXTRA_TITLE),
         )
     }
 

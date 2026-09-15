@@ -24,6 +24,14 @@ sealed interface PassNotice {
         val reason: FailureReason,
         val servers: List<String>,
         val sent: List<DestinationProgress> = emptyList(),
+        /**
+         * The accounts [servers] names, by `Account.backupKey` — what a later pass
+         * matches its evidence against. Not the labels: a label takes an email only
+         * while two destinations share a server, so adding a second account there
+         * changes the wording without changing the account the verdict is about. Left
+         * empty, the verdict claims nothing and stands until a pass ends.
+         */
+        val signedOutKeys: Set<String> = emptySet(),
     ) : PassNotice
 }
 
@@ -95,6 +103,63 @@ fun verdictKey(notice: PassNotice): String = when (notice) {
     is PassNotice.Finished -> "finished"
     is PassNotice.Failed -> "failed:${notice.reason}:${notice.servers.sorted().joinToString(",")}"
 }
+
+/**
+ * The checkable assertions a verdict makes about the world, as opaque tokens.
+ *
+ * A pass that retries never reaches a verdict of its own — it has not ended — so the only
+ * honest thing it can do to the shade is take down what it has since proved wrong. That
+ * comparison needs the standing verdict's claims and nothing else about it, which is why
+ * these are a set of tokens rather than prose: the notification carries them, and a later
+ * pass matches its own evidence against them without having to rebuild the notice.
+ *
+ * A verdict with nothing checkable in it claims a token nothing ever produces, so it
+ * stands until a pass ends and replaces it. "Backup finished" claims nothing at all and
+ * is left alone for the same reason from the other direction: a pass starting again does
+ * not make last night's count untrue.
+ */
+fun verdictClaims(notice: PassNotice): Set<String> = when (notice) {
+    is PassNotice.Finished -> emptySet()
+    is PassNotice.Failed -> when (notice.reason) {
+        FailureReason.MediaAccess -> setOf(MEDIA_UNREADABLE)
+        // A sign-out that names no account is a claim about nothing in particular, and
+        // nothing in particular can disprove it.
+        FailureReason.SignedOut -> notice.signedOutKeys.map(::signedOutOf).toSet()
+        FailureReason.Unknown -> setOf(NOT_CHECKABLE)
+    }
+}
+
+/**
+ * What a pass has disproved by the time it gives up and asks for a retry, by backup key.
+ *
+ * Called from inside the upload loop, which is what makes the first token true: reaching
+ * it at all means MediaStore answered. An upload the server accepted means that account
+ * is not signed out, whatever went wrong afterwards — and a server that could not be
+ * reached says nothing either way, so an account that sent nothing disproves nothing.
+ *
+ * [signedOutNow] is what this pass found for itself, and it overrides the uploads: a
+ * token that expires part way through leaves both behind, five files in and then a 401,
+ * and the newer of the two is the one that is still true.
+ */
+fun disprovedByRetry(uploadedTo: Set<String>, signedOutNow: Set<String>): Set<String> =
+    setOf(MEDIA_UNREADABLE) + (uploadedTo - signedOutNow).map(::signedOutOf)
+
+/**
+ * Whether every claim a standing verdict makes has been disproved.
+ *
+ * All of them or none: a verdict is an instruction, and one that is still true of a
+ * second server is still the thing to act on. Partly disproved, it stands as posted —
+ * reposting a shortened version would be a verdict no pass has actually reached, and
+ * under [BackupNotifications.result]'s rule it would have to arrive silently.
+ */
+fun retiredBy(claims: Set<String>, disproved: Set<String>): Boolean =
+    claims.isNotEmpty() && disproved.containsAll(claims)
+
+private const val MEDIA_UNREADABLE = "media"
+private const val NOT_CHECKABLE = "unknown"
+
+/** [key] is an `Account.backupKey`. Never a label: see [PassNotice.Failed.signedOutKeys]. */
+private fun signedOutOf(key: String) = "signed-out:$key"
 
 /**
  * Names that tell the destinations apart.

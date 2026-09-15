@@ -42,6 +42,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import com.imogen.android.backup.BackupNotifications
 import com.imogen.android.data.Account
+import com.imogen.android.data.AccountBook
 import com.imogen.android.data.Session
 import com.imogen.android.ui.albums.AlbumsScreen
 import com.imogen.android.ui.albums.CollectionShortcut
@@ -78,6 +79,13 @@ fun ImogenApp(
     // account book has loaded, and there is nothing to put the backup screen on top of
     // until it has.
     var openBackup by remember { mutableStateOf(false) }
+
+    // A link is consumed once, and waiting is not the same as waiting for ever. Keyed on
+    // both, because either can move last: the book loads under a link already waiting, or
+    // a notification is tapped while account setup is on screen already.
+    LaunchedEffect(book, openBackup) {
+        if (backupLinkAbandoned(openBackup, book)) openBackup = false
+    }
 
     // A pairing link can arrive at any moment, including while somebody is looking at a
     // photograph. It is handled at the top so it works from wherever they were.
@@ -735,3 +743,40 @@ enum class LinkTarget {
 // called backupserver, and swallowing it here would lose it entirely.
 fun targetOf(url: String): LinkTarget =
     if (url == BackupNotifications.DEEP_LINK) LinkTarget.Backup else LinkTarget.Accounts
+
+/**
+ * The link a launch should act on, which is only ever a first launch's.
+ *
+ * An activity is handed its starting intent again every time it is re-created — resumed
+ * from recents after the process died, or under "Don't keep activities" — so reading it
+ * there replays the tap and reopens the backup screen from wherever the user actually
+ * was. Rotation is not one of those: `MainActivity` handles the configuration changes
+ * itself and is never re-created for them.
+ *
+ * No genuine tap is lost to this. A new intent is never what a re-created activity is
+ * handed: the system relaunches it with the *original* intent and delivers the new one to
+ * `onNewIntent`, which is untouched by this and is also how every tap that arrives while
+ * the app is alive gets in.
+ *
+ * One path is left open. A tap that starts the task makes the link the task's *root*
+ * intent, and a root intent is persisted where saved instance state is not — so relaunching
+ * the task after a reboot hands the link back with nothing to say it was spent. Closing
+ * that needs somewhere durable to record what has been consumed, which this does not have.
+ *
+ * Clearing the intent's own data once the link is handled would not do it: `setIntent`
+ * changes this process's copy, and what a re-created activity is handed comes from the
+ * system's.
+ */
+fun launchLink(data: String?, restored: Boolean): String? = data.takeUnless { restored }
+
+/**
+ * Whether a backup link still waiting for a screen should be let go of.
+ *
+ * Not simply "there is no account": until the book has loaded there is no account
+ * *known*, and a notification tapped from cold arrives before it — dropping the link then
+ * would lose every tap made while the app was not running. What drops it is a book that
+ * has loaded with nothing in it, which is account setup, and what somebody expects after
+ * signing in is their library rather than a backup overlay from before.
+ */
+fun backupLinkAbandoned(waiting: Boolean, book: AccountBook?): Boolean =
+    waiting && book != null && book.active == null
