@@ -11,6 +11,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.imogen.android.ui.ImogenApp
 import com.imogen.android.ui.RootViewModel
+import com.imogen.android.ui.launchLink
 import com.imogen.android.ui.theme.ImogenTheme
 
 /**
@@ -27,7 +28,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        deepLink = intent?.data?.toString()
+        deepLink = launchLink(intent?.data?.toString(), restored = savedInstanceState != null)
 
         setContent {
             ImogenTheme {

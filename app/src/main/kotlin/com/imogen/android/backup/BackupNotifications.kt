@@ -39,6 +39,7 @@ object BackupNotifications {
     const val RESULT_ID = 4202
 
     private const val EXTRA_VERDICT = "com.imogen.android.backup.verdict"
+    private const val EXTRA_CLAIMS = "com.imogen.android.backup.claims"
 
     fun foreground(context: Context, destinations: List<DestinationProgress>): ForegroundInfo {
         val notification = progress(context, destinations)
@@ -85,18 +86,49 @@ object BackupNotifications {
             .setAutoCancel(true)
             .setOnlyAlertOnce(verdict == showingVerdict(context))
             .setStyle(NotificationCompat.BigTextStyle().bigText(noticeDetail(notice)))
-            .addExtras(Bundle().apply { putString(EXTRA_VERDICT, verdict) })
+            .addExtras(
+                Bundle().apply {
+                    putString(EXTRA_VERDICT, verdict)
+                    // Carried with the verdict so a later pass can tell what this one
+                    // asserted without rebuilding it. See [retire].
+                    putStringArray(EXTRA_CLAIMS, verdictClaims(notice).toTypedArray())
+                },
+            )
             .build()
+    }
+
+    /**
+     * Take down a verdict a pass has disproved on its way to asking for a retry.
+     *
+     * A retry is not an ending and posts nothing — which is the whole reason this exists
+     * separately from [settle]. "Signed out of family.example.org" would otherwise stand
+     * through the backoff of a pass that had just uploaded to family.example.org.
+     *
+     * Cancelling on every retry instead would undo [result]'s rule: it decides whether to
+     * alert by reading what the shade is holding, so an empty shade makes the next failing
+     * pass news, and a flaky network would alert about the same sign-out every cycle.
+     * Only evidence takes anything down, and only when it covers the whole verdict.
+     */
+    fun retire(context: Context, disproved: Set<String>) {
+        val claims = showingClaims(context) ?: return
+        if (!retiredBy(claims, disproved)) return
+        NotificationManagerCompat.from(context).cancel(RESULT_ID)
     }
 
     /** The verdict the shade is holding, or null — dismissed counts as nothing showing. */
     private fun showingVerdict(context: Context): String? =
+        showing(context)?.getString(EXTRA_VERDICT)
+
+    /** What that verdict asserts, or null when the shade is holding nothing. */
+    private fun showingClaims(context: Context): Set<String>? =
+        showing(context)?.getStringArray(EXTRA_CLAIMS)?.toSet()
+
+    private fun showing(context: Context): Bundle? =
         context.getSystemService(NotificationManager::class.java)
             .activeNotifications
             .firstOrNull { it.id == RESULT_ID }
             ?.notification
             ?.extras
-            ?.getString(EXTRA_VERDICT)
 
     /**
      * What the shade is left holding when a pass ends: this verdict, or nothing.

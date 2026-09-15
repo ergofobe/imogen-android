@@ -157,6 +157,79 @@ class BackupNoticeTest {
         )
     }
 
+    // A verdict already in the shade outliving the condition that produced it is the whole
+    // of #45. A retrying pass never ends, so it cannot post a verdict of its own — all it
+    // can do is retire the parts of the standing one it has disproved.
+
+    @Test
+    fun `an upload that got through disproves that account's sign-out`() {
+        val stopped = PassNotice.Failed(FailureReason.SignedOut, listOf("photos.example.com"))
+
+        val disproved = disprovedByRetry(listOf(to("photos.example.com", 12, 40)))
+
+        assertTrue(retiredBy(verdictClaims(stopped), disproved))
+    }
+
+    @Test
+    fun `a pass that sent nothing disproves no sign-out`() {
+        val stopped = PassNotice.Failed(FailureReason.SignedOut, listOf("photos.example.com"))
+
+        // The server was unreachable on the first file. Being unable to reach a server is
+        // not evidence that it still knows us.
+        val disproved = disprovedByRetry(listOf(to("photos.example.com", 0, 40)))
+
+        assertFalse(retiredBy(verdictClaims(stopped), disproved))
+    }
+
+    @Test
+    fun `one server signed in does not retire a verdict that blames two`() {
+        val stopped = PassNotice.Failed(
+            FailureReason.SignedOut,
+            listOf("photos.example.com", "family.example.org"),
+        )
+
+        val disproved = disprovedByRetry(
+            listOf(to("photos.example.com", 3, 40), to("family.example.org", 0, 12)),
+        )
+
+        // Still true of one of them, and it is still the thing to do something about.
+        assertFalse(retiredBy(verdictClaims(stopped), disproved))
+    }
+
+    @Test
+    fun `a pass that reached the upload loop disproves a media-access failure`() {
+        val stopped = PassNotice.Failed(FailureReason.MediaAccess, emptyList())
+
+        assertTrue(retiredBy(verdictClaims(stopped), disprovedByRetry(emptyList())))
+    }
+
+    @Test
+    fun `a failure with no reason is not disproved by anything`() {
+        val stopped = PassNotice.Failed(FailureReason.Unknown, emptyList())
+
+        val disproved = disprovedByRetry(listOf(to("photos.example.com", 9, 9)))
+
+        assertFalse(retiredBy(verdictClaims(stopped), disproved))
+    }
+
+    @Test
+    fun `a sign-out that names no server is not retired by guesswork`() {
+        val stopped = PassNotice.Failed(FailureReason.SignedOut, emptyList())
+
+        val disproved = disprovedByRetry(listOf(to("photos.example.com", 9, 9)))
+
+        assertFalse(retiredBy(verdictClaims(stopped), disproved))
+    }
+
+    @Test
+    fun `a finished verdict is nobody's to retire`() {
+        val finished = finishedNotice(listOf(to("photos.example.com", 484)))!!
+
+        val disproved = disprovedByRetry(listOf(to("photos.example.com", 9, 9)))
+
+        assertFalse(retiredBy(verdictClaims(finished), disproved))
+    }
+
     @Test
     fun `a failure with no reason still says the pass gave up`() {
         assertTrue(noticeText(PassNotice.Failed(FailureReason.Unknown, emptyList())).isNotEmpty())

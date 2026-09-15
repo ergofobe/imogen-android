@@ -97,6 +97,58 @@ fun verdictKey(notice: PassNotice): String = when (notice) {
 }
 
 /**
+ * The checkable assertions a verdict makes about the world, as opaque tokens.
+ *
+ * A pass that retries never reaches a verdict of its own — it has not ended — so the only
+ * honest thing it can do to the shade is take down what it has since proved wrong. That
+ * comparison needs the standing verdict's claims and nothing else about it, which is why
+ * these are a set of tokens rather than prose: the notification carries them, and a later
+ * pass matches its own evidence against them without having to rebuild the notice.
+ *
+ * A verdict with nothing checkable in it claims a token nothing ever produces, so it
+ * stands until a pass ends and replaces it. "Backup finished" claims nothing at all and
+ * is left alone for the same reason from the other direction: a pass starting again does
+ * not make last night's count untrue.
+ */
+fun verdictClaims(notice: PassNotice): Set<String> = when (notice) {
+    is PassNotice.Finished -> emptySet()
+    is PassNotice.Failed -> when (notice.reason) {
+        FailureReason.MediaAccess -> setOf(MEDIA_UNREADABLE)
+        // A sign-out that names no server is a claim about nothing in particular, and
+        // nothing in particular can disprove it.
+        FailureReason.SignedOut -> notice.servers.map(::signedOutOf).toSet()
+        FailureReason.Unknown -> setOf(NOT_CHECKABLE)
+    }
+}
+
+/**
+ * What a pass has disproved by the time it gives up and asks for a retry.
+ *
+ * Called from inside the upload loop, which is what makes the first token true: reaching
+ * it at all means MediaStore answered. An upload the server accepted means that account
+ * is not signed out, whatever went wrong afterwards — and a server that could not be
+ * reached says nothing either way, so a destination that sent nothing disproves nothing.
+ */
+fun disprovedByRetry(sent: List<DestinationProgress>): Set<String> =
+    setOf(MEDIA_UNREADABLE) + sent.filter { it.completed > 0 }.map { signedOutOf(it.label) }
+
+/**
+ * Whether every claim a standing verdict makes has been disproved.
+ *
+ * All of them or none: a verdict is an instruction, and one that is still true of a
+ * second server is still the thing to act on. Partly disproved, it stands as posted —
+ * reposting a shortened version would be a verdict no pass has actually reached, and
+ * under [BackupNotifications.result]'s rule it would have to arrive silently.
+ */
+fun retiredBy(claims: Set<String>, disproved: Set<String>): Boolean =
+    claims.isNotEmpty() && disproved.containsAll(claims)
+
+private const val MEDIA_UNREADABLE = "media"
+private const val NOT_CHECKABLE = "unknown"
+
+private fun signedOutOf(label: String) = "signed-out:$label"
+
+/**
  * Names that tell the destinations apart.
  *
  * Two accounts on one server is a supported arrangement, and the address alone then names

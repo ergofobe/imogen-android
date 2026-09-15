@@ -135,7 +135,7 @@ class BackupWorker(
             for (account in destinations) {
                 if (item.deviceAssetId !in outstanding.getValue(account.backupKey)) continue
                 if (account.backupKey in signedOut) continue
-                if (isStopped) return Result.retry()
+                if (isStopped) return retry(rowsOf(labels, totals, uploaded))
 
                 setProgress(
                     workDataOf(
@@ -178,7 +178,7 @@ class BackupWorker(
             if (retryable) break
         }
 
-        if (retryable) return Result.retry()
+        if (retryable) return retry(rowsOf(labels, totals, uploaded))
 
         // The signed-out ones are emphatically not up to date, and stamping them would
         // have the screen report a time when everything was safely copied across.
@@ -252,11 +252,24 @@ class BackupWorker(
     /**
      * Every way a pass can end goes through here, so the shade is never left holding the
      * last pass's verdict — "signed out of family.example.org" outliving the sign-in that
-     * put it right was the whole of that bug. A retry is not an ending and does not.
+     * put it right was the whole of that bug. A retry is not an ending: see [retry].
      */
     private fun finish(result: Result, notice: PassNotice? = null): Result {
         BackupNotifications.settle(applicationContext, notice)
         return result
+    }
+
+    /**
+     * Giving up for now, with whatever this pass managed to prove wrong on the way out.
+     *
+     * A retry has no verdict to post: it does not know yet how the pass ends. What it does
+     * know is that a server which accepted an upload has not signed us out — so the parts
+     * of the standing verdict it has disproved go, and the rest stands rather than being
+     * reposted or re-alerted through the backoff.
+     */
+    private fun retry(sent: List<DestinationProgress>): Result {
+        BackupNotifications.retire(applicationContext, disprovedByRetry(sent))
+        return Result.retry()
     }
 
     private fun rowsOf(
