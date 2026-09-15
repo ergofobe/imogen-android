@@ -260,7 +260,11 @@ private fun PassRow(pass: PassState) {
             // failure that will not fix itself however many times the backup tries.
             FailureReason.SignedOut ->
                 "This account is signed out. Sign in again to carry on backing up."
-            FailureReason.Unknown -> "The last backup could not finish. It will try again."
+            // No promise of another go. A pass that gave up for a reason it could name
+            // asks WorkManager to come back and does not reach here; what does is a
+            // worker that died where it could not catch itself, and that is the one case
+            // where the schedule really has stopped.
+            FailureReason.Unknown -> "The last backup could not finish."
         }
         PassState.Running, PassState.Idle -> null
     } ?: return

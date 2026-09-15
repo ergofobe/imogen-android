@@ -619,7 +619,12 @@ private fun BackupPane(
         model = model,
         preferences = preferences,
         status = status,
-        failures = com.imogen.android.backup.summarise(failures.map(::asFailedUpload)),
+        failures = com.imogen.android.backup.summarise(
+            com.imogen.android.backup.reachable(
+                failures.map(::asFailedUpload),
+                backupKeys.toSet(),
+            ),
+        ),
         onOpenFailures = { onOverlay(Overlay.FailedUploads) },
         mediaAccess = access,
         contentPadding = contentPadding,
@@ -683,10 +688,13 @@ private fun FailedUploadsPane(model: RootViewModel, contentPadding: PaddingValue
     val rows by androidx.compose.runtime.remember { ledger.failures() }
         .collectAsStateWithLifecycle(initialValue = emptyList())
     val book by model.book.collectAsStateWithLifecycle()
+    val labels = book?.accounts.orEmpty().associate { it.backupKey to it.serverLabel }
 
     com.imogen.android.ui.settings.FailedUploadsScreen(
-        failures = rows.map(::asFailedUpload),
-        serverLabels = book?.accounts.orEmpty().associate { it.backupKey to it.serverLabel },
+        // Only what a pass can still reach: see `reachable`. The same keys name the
+        // labels, so every row listed has one.
+        failures = com.imogen.android.backup.reachable(rows.map(::asFailedUpload), labels.keys),
+        serverLabels = labels,
         contentPadding = contentPadding,
         onRetry = { failure ->
             scope.launch {

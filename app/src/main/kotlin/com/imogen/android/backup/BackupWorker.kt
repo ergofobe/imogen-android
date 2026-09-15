@@ -9,7 +9,6 @@ import com.imogen.android.ImogenApplication
 import com.imogen.android.data.Account
 import com.imogen.android.data.Session
 import com.imogen.sdk.AssetUploadMetadata
-import com.imogen.sdk.ImogenException
 import com.imogen.sdk.UploadOptions
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -44,7 +43,7 @@ class BackupWorker(
         // shown: "it could not finish" is what somebody reports, and the throwable is
         // the only thing that says why.
         Log.e(TAG, "backup pass failed", error)
-        finish(Result.failure(), PassNotice.Failed(FailureReason.Unknown, emptyList()))
+        stopped(FailureReason.Unknown)
     }
 
     private suspend fun pass(): Result {
@@ -72,10 +71,7 @@ class BackupWorker(
         if (MediaPermission.check(applicationContext, preferences.includeVideos) ==
             MediaAccess.Denied
         ) {
-            return finish(
-                Result.failure(workDataOf(RESULT_REASON to REASON_MEDIA_ACCESS)),
-                PassNotice.Failed(FailureReason.MediaAccess, emptyList()),
-            )
+            return stopped(FailureReason.MediaAccess)
         }
 
         // Said before the scan rather than after it: reading several thousand MediaStore
@@ -185,17 +181,15 @@ class BackupWorker(
         // have the screen report a time when everything was safely copied across.
         state.recordCompleted(ids.filterNot { it in signedOut }, System.currentTimeMillis())
 
-        // Failure rather than retry: backing off would only repeat the refusal on a timer,
-        // and silently. This is the one outcome that waiting cannot mend.
+        // Not a retry: backing off would only repeat the refusal on a timer, and silently.
+        // Not a failure either — see [verdictFor]. Whatever the other destinations took is
+        // carried into the notice, because a server signing us out does not unsend it.
         val sent = rowsOf(labels, totals, uploaded)
         if (signedOut.isNotEmpty()) {
-            return finish(
-                Result.failure(workDataOf(RESULT_REASON to REASON_SIGNED_OUT)),
-                PassNotice.Failed(
-                    FailureReason.SignedOut,
-                    ids.indices.filter { ids[it] in signedOut }.map { labels[it] },
-                    sent,
-                ),
+            return stopped(
+                FailureReason.SignedOut,
+                servers = ids.indices.filter { ids[it] in signedOut }.map { labels[it] },
+                sent = sent,
             )
         }
 
@@ -206,18 +200,17 @@ class BackupWorker(
         session: Session,
         item: LocalMedia,
         account: Account,
-    ): UploadOutcome {
-        val ledger = BackupLedger.get(applicationContext).uploads()
-        val existing = ledger.failuresFor(account.backupKey).firstOrNull {
-            it.deviceAssetId == item.deviceAssetId
-        }
-
+    ): UploadOutcome = recordUpload(
+        BackupLedger.get(applicationContext).uploads(),
+        account,
+        item,
+    ) {
         var scratch: File? = null
-        return try {
+        try {
             val file = item.path?.let(::File)?.takeIf { it.canRead() }
                 ?: copyToCache(item).also { scratch = it }
 
-            val result = session.client.assets.upload(
+            session.client.assets.upload(
                 file,
                 UploadOptions(
                     metadata = AssetUploadMetadata(
@@ -226,63 +219,11 @@ class BackupWorker(
                         filename = item.displayName,
                     ),
                 ),
-            )
-
-            ledger.put(
-                UploadRecord(
-                    backupKey = account.backupKey,
-                    deviceAssetId = item.deviceAssetId,
-                    assetId = result.asset.id,
-                    uploadedAt = System.currentTimeMillis(),
-                ),
-            )
-            UploadOutcome.Uploaded
-        } catch (error: ImogenException) {
-            // Only a rejection the server will keep making — a file type it will not take,
-            // a quota that is full — belongs against this file. Anything transient is the
-            // server's problem and anything about the account is the account's, and
-            // neither must spend a photograph's attempts or its place in the backup.
-            val outcome = outcomeOf(error)
-            if (outcome == UploadOutcome.Rejected) {
-                ledger.put(failure(account, item, existing, describe(error)))
-            }
-            outcome
-        } catch (error: Exception) {
-            val unreadable = error is java.io.IOException && item.path == null
-            ledger.put(failure(account, item, existing, error.message ?: error.toString()))
-            if (unreadable) UploadOutcome.Rejected else UploadOutcome.Unavailable
+            ).asset.id
         } finally {
             scratch?.delete()
         }
     }
-
-    /**
-     * The server names the offending fields in `details`; the sentence on its own says
-     * only that something was wrong. A ledger full of "the request did not match what
-     * this endpoint expects" identifies nothing, which is how every upload came to be
-     * failing without anybody being able to say why.
-     */
-    private fun describe(error: ImogenException): String {
-        val fields = error.details.orEmpty()
-            .entries
-            .joinToString("; ") { (field, messages) -> "$field: ${messages.joinToString(", ")}" }
-        return if (fields.isEmpty()) error.message else "${error.message} ($fields)"
-    }
-
-    private fun failure(
-        account: Account,
-        item: LocalMedia,
-        existing: UploadRecord?,
-        message: String?,
-    ) = UploadRecord(
-        backupKey = account.backupKey,
-        deviceAssetId = item.deviceAssetId,
-        assetId = null,
-        uploadedAt = System.currentTimeMillis(),
-        attempts = (existing?.attempts ?: 0) + 1,
-        lastError = message,
-        displayName = item.displayName,
-    )
 
     /**
      * For media whose real path MediaStore will not give up — anything on a volume the
@@ -302,12 +243,25 @@ class BackupWorker(
     /**
      * Every way a pass can end goes through here, so the shade is never left holding the
      * last pass's verdict — "signed out of family.example.org" outliving the sign-in that
-     * put it right was the whole of that bug. A retry is not an ending and does not.
+     * put it right was the whole of that bug. Being stopped part-way is not an ending and
+     * does not.
      */
     private fun finish(result: Result, notice: PassNotice? = null): Result {
         BackupNotifications.settle(applicationContext, notice)
         return result
     }
+
+    /**
+     * The one way a pass gives up, so the verdict WorkManager is handed and the sentence
+     * the shade is left holding are chosen together and cannot drift apart. They had:
+     * every exit returned `Result.failure()`, which cancels a periodic schedule outright,
+     * under a notice that promised another attempt.
+     */
+    private fun stopped(
+        reason: FailureReason,
+        servers: List<String> = emptyList(),
+        sent: List<DestinationProgress> = emptyList(),
+    ): Result = finish(verdictFor(reason), PassNotice.Failed(reason, servers, sent))
 
     private fun rowsOf(
         labels: List<String>,
