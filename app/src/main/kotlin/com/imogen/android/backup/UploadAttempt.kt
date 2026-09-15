@@ -43,50 +43,31 @@ suspend fun recordUpload(
         // file out of every future pass. Being stopped is not a verdict on anything.
         throw cancelled
     } catch (error: ImogenException) {
-        outcomeOf(error).recordedAgainst(ledger, account, item, existing, describe(error))
+        // Only a rejection the server will keep making — a file type it will not take, a
+        // quota that is full — belongs against this file. Anything transient is the
+        // server's problem and anything about the account is the account's, and neither
+        // must spend a photograph's attempts or its place in the backup.
+        val outcome = outcomeOf(error)
+        if (outcome == UploadOutcome.Rejected) {
+            ledger.put(failureRecord(account, item, existing, describe(error)))
+        }
+        outcome
     } catch (error: Exception) {
-        // A file MediaStore will not hand over does not become readable by waiting, so
-        // that one really is about the file. Everything else arriving here is the
-        // network: the SDK cannot replay a multipart body to retry it, so it rethrows the
-        // transport error untouched, and a dropped connection mid-upload turns up as a
-        // plain IOException rather than as an ImogenException. Charging that to the
-        // photograph spent an attempt per blip — three blips and it was settled out of
-        // the backup for good, which is the same hole as the one above by another door.
-        val outcome = if (error is IOException && item.path == null) {
+        // Unchanged from before the extraction, and not right: a dropped connection
+        // arrives here as a plain IOException — the SDK cannot replay a multipart body,
+        // so it rethrows the transport error untouched — and is charged to the
+        // photograph, which the arm above deliberately does not do for the same class of
+        // failure. Writing nothing here instead is worse: `Unavailable` breaks the pass,
+        // and a file that always fails locally would then stall every future pass at the
+        // same photograph with no row to settle it. Telling the two apart needs the
+        // classification to happen where the file is opened. See the PR.
+        ledger.put(failureRecord(account, item, existing, error.message ?: error.toString()))
+        if (error is IOException && item.path == null) {
             UploadOutcome.Rejected
         } else {
             UploadOutcome.Unavailable
         }
-        outcome.recordedAgainst(
-            ledger,
-            account,
-            item,
-            existing,
-            error.message ?: error.toString(),
-        )
     }
-}
-
-/**
- * The one rule about what a failure costs a photograph, in one place so the two arms
- * above cannot disagree about it.
- *
- * Only a refusal the server will keep making — a file type it will not take, a quota that
- * is full — may spend an attempt, because it is the only outcome that will not come right
- * on its own. Anything transient is the server's or the network's, and anything about the
- * account is the account's; a hundred photographs once carried "Authentication required"
- * three times each and were then skipped for ever.
- */
-private suspend fun UploadOutcome.recordedAgainst(
-    ledger: UploadDao,
-    account: Account,
-    item: LocalMedia,
-    existing: UploadRecord?,
-    message: String,
-): UploadOutcome {
-    if (this != UploadOutcome.Rejected) return this
-    ledger.put(failureRecord(account, item, existing, message))
-    return this
 }
 
 /**
