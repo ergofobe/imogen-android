@@ -28,6 +28,13 @@ jobs:
           java-version: '21'
 
       - uses: android-actions/setup-android@v3
+        with:
+          # The action's default is `tools platform-tools`, and `tools` was withdrawn
+          # from the SDK repository -- sdkmanager then exits non-zero on
+          # `Failed to find package 'tools'` and the job dies before gradle starts.
+          # Naming what we need keeps a package being retired upstream from
+          # breaking every build here again.
+          packages: 'platform-tools'
 
       - uses: gradle/actions/setup-gradle@v4
 
