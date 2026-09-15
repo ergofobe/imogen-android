@@ -131,11 +131,17 @@ class BackupWorker(
         var retryable = false
         val signedOut = mutableSetOf<String>()
 
+        // Who the pass has found signed out so far, named the way a verdict names them.
+        fun signedOutLabels(): List<String> =
+            ids.indices.filter { ids[it] in signedOut }.map { labels[it] }
+
         for (item in ordered) {
             for (account in destinations) {
                 if (item.deviceAssetId !in outstanding.getValue(account.backupKey)) continue
                 if (account.backupKey in signedOut) continue
-                if (isStopped) return retry(rowsOf(labels, totals, uploaded))
+                if (isStopped) {
+                    return retry(rowsOf(labels, totals, uploaded), signedOutLabels().toSet())
+                }
 
                 setProgress(
                     workDataOf(
@@ -178,7 +184,7 @@ class BackupWorker(
             if (retryable) break
         }
 
-        if (retryable) return retry(rowsOf(labels, totals, uploaded))
+        if (retryable) return retry(rowsOf(labels, totals, uploaded), signedOutLabels().toSet())
 
         // The signed-out ones are emphatically not up to date, and stamping them would
         // have the screen report a time when everything was safely copied across.
@@ -190,11 +196,7 @@ class BackupWorker(
         if (signedOut.isNotEmpty()) {
             return finish(
                 Result.failure(workDataOf(RESULT_REASON to REASON_SIGNED_OUT)),
-                PassNotice.Failed(
-                    FailureReason.SignedOut,
-                    ids.indices.filter { ids[it] in signedOut }.map { labels[it] },
-                    sent,
-                ),
+                PassNotice.Failed(FailureReason.SignedOut, signedOutLabels(), sent),
             )
         }
 
@@ -263,12 +265,12 @@ class BackupWorker(
      * Giving up for now, with whatever this pass managed to prove wrong on the way out.
      *
      * A retry has no verdict to post: it does not know yet how the pass ends. What it does
-     * know is that a server which accepted an upload has not signed us out — so the parts
-     * of the standing verdict it has disproved go, and the rest stands rather than being
-     * reposted or re-alerted through the backoff.
+     * know is that a server which accepted an upload and did not then sign us out has not
+     * signed us out — so the parts of the standing verdict it has disproved go, and the
+     * rest stands rather than being reposted or re-alerted through the backoff.
      */
-    private fun retry(sent: List<DestinationProgress>): Result {
-        BackupNotifications.retire(applicationContext, disprovedByRetry(sent))
+    private fun retry(sent: List<DestinationProgress>, signedOutNow: Set<String>): Result {
+        BackupNotifications.retire(applicationContext, disprovedByRetry(sent, signedOutNow))
         return Result.retry()
     }
 

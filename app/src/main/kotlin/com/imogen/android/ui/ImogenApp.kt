@@ -80,9 +80,11 @@ fun ImogenApp(
     // until it has.
     var openBackup by remember { mutableStateOf(false) }
 
-    // A link is consumed once, and waiting is not the same as waiting for ever.
-    LaunchedEffect(book) {
-        if (backupLinkAbandoned(book)) openBackup = false
+    // A link is consumed once, and waiting is not the same as waiting for ever. Keyed on
+    // both, because either can move last: the book loads under a link already waiting, or
+    // a notification is tapped while account setup is on screen already.
+    LaunchedEffect(book, openBackup) {
+        if (backupLinkAbandoned(openBackup, book)) openBackup = false
     }
 
     // A pairing link can arrive at any moment, including while somebody is looking at a
@@ -746,10 +748,14 @@ fun targetOf(url: String): LinkTarget =
  * The link a launch should act on, which is only ever a first launch's.
  *
  * An activity is handed its starting intent again every time it is re-created — resumed
- * from recents after the process died, rotated, or under "Don't keep activities" — so
- * reading it there replays the tap and reopens the backup screen from wherever the user
- * actually was. A tap that arrives while the app is alive comes through `onNewIntent`
- * instead and is untouched by this.
+ * from recents after the process died, or under "Don't keep activities" — so reading it
+ * there replays the tap and reopens the backup screen from wherever the user actually
+ * was.
+ *
+ * No genuine tap is lost to this. A new intent is never what a re-created activity is
+ * handed: the system relaunches it with the *original* intent and delivers the new one to
+ * `onNewIntent`, which is untouched by this and is also how every tap that arrives while
+ * the app is alive gets in.
  *
  * Clearing the intent's own data once the link is handled would not do it: `setIntent`
  * changes this process's copy, and what a re-created activity is handed comes from the
@@ -766,4 +772,5 @@ fun launchLink(data: String?, restored: Boolean): String? = data.takeUnless { re
  * has loaded with nothing in it, which is account setup, and what somebody expects after
  * signing in is their library rather than a backup overlay from before.
  */
-fun backupLinkAbandoned(book: AccountBook?): Boolean = book != null && book.active == null
+fun backupLinkAbandoned(waiting: Boolean, book: AccountBook?): Boolean =
+    waiting && book != null && book.active == null

@@ -128,9 +128,17 @@ fun verdictClaims(notice: PassNotice): Set<String> = when (notice) {
  * it at all means MediaStore answered. An upload the server accepted means that account
  * is not signed out, whatever went wrong afterwards — and a server that could not be
  * reached says nothing either way, so a destination that sent nothing disproves nothing.
+ *
+ * [signedOutNow] is what this pass found for itself, and it overrides the uploads. A
+ * token that expires part way through leaves both behind — five files in, then a 401 —
+ * and the newer of the two is the one that is still true.
  */
-fun disprovedByRetry(sent: List<DestinationProgress>): Set<String> =
-    setOf(MEDIA_UNREADABLE) + sent.filter { it.completed > 0 }.map { signedOutOf(it.label) }
+fun disprovedByRetry(
+    sent: List<DestinationProgress>,
+    signedOutNow: Set<String>,
+): Set<String> = setOf(MEDIA_UNREADABLE) +
+    sent.filter { it.completed > 0 && it.label !in signedOutNow }
+        .map { signedOutOf(it.label) }
 
 /**
  * Whether every claim a standing verdict makes has been disproved.

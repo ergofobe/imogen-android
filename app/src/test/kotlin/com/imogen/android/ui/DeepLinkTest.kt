@@ -63,18 +63,28 @@ class DeepLinkTest {
     fun `a backup link is let go of when there is no account left to back up`() {
         // Tapped when the last account has gone, it would otherwise wait through account
         // setup and land on the backup screen the moment a new account was linked.
-        assertTrue(backupLinkAbandoned(AccountBook()))
+        assertTrue(backupLinkAbandoned(waiting = true, book = AccountBook()))
+    }
+
+    @Test
+    fun `nothing is let go of when no link is waiting`() {
+        assertFalse(backupLinkAbandoned(waiting = false, book = AccountBook()))
     }
 
     @Test
     fun `a backup link waits while the account book is still loading`() {
         // A notification tapped from cold arrives before the book. Dropping it here would
         // lose every tap made while the app was not running.
-        assertFalse(backupLinkAbandoned(null))
+        assertFalse(backupLinkAbandoned(waiting = true, book = null))
     }
 
     @Test
     fun `a backup link stands when there is an account`() {
-        assertFalse(backupLinkAbandoned(AccountBook(listOf(account), activeAccountId = "a")))
+        assertFalse(
+            backupLinkAbandoned(
+                waiting = true,
+                book = AccountBook(listOf(account), activeAccountId = "a"),
+            ),
+        )
     }
 }

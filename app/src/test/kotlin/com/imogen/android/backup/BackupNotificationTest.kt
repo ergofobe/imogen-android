@@ -183,7 +183,7 @@ class BackupNotificationTest {
     fun `a retry takes down a sign-out it has disproved`() {
         BackupNotifications.settle(context, signedOutOf("photos.example.com"))
 
-        BackupNotifications.retire(context, disprovedByRetry(listOf(sent("photos.example.com", 12))))
+        BackupNotifications.retire(context, disprovedByRetry(listOf(sent("photos.example.com", 12)), signedOutNow = emptySet()))
 
         assertEquals(emptyList<Int>(), shadowOf(manager).activeNotifications.map { it.id })
     }
@@ -194,13 +194,34 @@ class BackupNotificationTest {
         BackupNotifications.settle(context, stopped)
 
         // Unreachable on the first file, so nothing got through and nothing is disproved.
-        BackupNotifications.retire(context, disprovedByRetry(listOf(sent("photos.example.com", 0))))
+        BackupNotifications.retire(context, disprovedByRetry(listOf(sent("photos.example.com", 0)), signedOutNow = emptySet()))
         BackupNotifications.settle(context, stopped)
 
         // The half that must not regress. #21's rule turns on what the shade is already
         // holding, so a retry that cleared it would have a flaky network alert somebody
         // about the same sign-out on every backoff cycle.
         assertNotEquals(0, showing().flags and Notification.FLAG_ONLY_ALERT_ONCE)
+    }
+
+    @Test
+    fun `a retry does not take down a sign-out this very pass found again`() {
+        val stopped = signedOutOf("photos.example.com")
+        BackupNotifications.settle(context, stopped)
+
+        // The token expired part way through: the uploads got in before the 401, and the
+        // pass is carrying fresh proof that the account is signed out after all.
+        BackupNotifications.retire(
+            context,
+            disprovedByRetry(
+                listOf(sent("photos.example.com", 5)),
+                signedOutNow = setOf("photos.example.com"),
+            ),
+        )
+
+        assertTrue(
+            showing().extras.getString(Notification.EXTRA_TEXT).orEmpty()
+                .contains("photos.example.com"),
+        )
     }
 
     @Test
@@ -211,7 +232,7 @@ class BackupNotificationTest {
         )
         BackupNotifications.settle(context, stopped)
 
-        BackupNotifications.retire(context, disprovedByRetry(listOf(sent("photos.example.com", 12))))
+        BackupNotifications.retire(context, disprovedByRetry(listOf(sent("photos.example.com", 12)), signedOutNow = emptySet()))
 
         // The other one is still signed out, and that is still the thing to act on.
         assertTrue(
@@ -224,7 +245,7 @@ class BackupNotificationTest {
     fun `a verdict a retry retired alerts when it comes back`() {
         val stopped = signedOutOf("photos.example.com")
         BackupNotifications.settle(context, stopped)
-        BackupNotifications.retire(context, disprovedByRetry(listOf(sent("photos.example.com", 12))))
+        BackupNotifications.retire(context, disprovedByRetry(listOf(sent("photos.example.com", 12)), signedOutNow = emptySet()))
 
         BackupNotifications.settle(context, stopped)
 
@@ -236,7 +257,7 @@ class BackupNotificationTest {
     fun `a retry does not take down a finished verdict`() {
         BackupNotifications.settle(context, finished)
 
-        BackupNotifications.retire(context, disprovedByRetry(listOf(sent("photos.example.com", 12))))
+        BackupNotifications.retire(context, disprovedByRetry(listOf(sent("photos.example.com", 12)), signedOutNow = emptySet()))
 
         assertEquals(
             noticeTitle(finished),
