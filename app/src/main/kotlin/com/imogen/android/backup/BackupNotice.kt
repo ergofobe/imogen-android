@@ -158,7 +158,8 @@ fun retiredBy(claims: Set<String>, disproved: Set<String>): Boolean =
 private const val MEDIA_UNREADABLE = "media"
 private const val NOT_CHECKABLE = "unknown"
 
-private fun signedOutOf(label: String) = "signed-out:$label"
+/** [key] is an `Account.backupKey`. Never a label: see [PassNotice.Failed.signedOutKeys]. */
+private fun signedOutOf(key: String) = "signed-out:$key"
 
 /**
  * Names that tell the destinations apart.
