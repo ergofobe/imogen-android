@@ -52,8 +52,26 @@ if ! java -version >/dev/null 2>&1; then
   exit 1
 fi
 
-sdk=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$(sed -n 's/^sdk\.dir=//p' local.properties 2>/dev/null)}}
-apksigner=$(ls "$sdk"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)
+# Every lookup below is written so it cannot fail, because under `set -e` a failing command
+# substitution kills the script *at the assignment* and the guard written to explain it never
+# runs — an operator holding the release key gets exit 1 and an empty terminal. `sed` on a
+# missing local.properties and `ls` on a glob that matches nothing both fail exactly when the
+# thing being looked up is absent, which is the one case the guards exist for.
+sdk=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}
+if [ -z "$sdk" ] && [ -f local.properties ]; then
+  sdk=$(sed -n 's/^sdk\.dir=//p' local.properties)
+fi
+if [ -z "$sdk" ]; then
+  echo "error: no Android SDK location" >&2
+  echo "Set ANDROID_HOME (or ANDROID_SDK_ROOT), or run this from a checkout whose" >&2
+  echo "local.properties has sdk.dir — it is gitignored, so a fresh worktree has none." >&2
+  exit 1
+fi
+
+# printf prints the unmatched pattern rather than failing, so the guard below always gets to
+# speak. sort -V because build-tools directories are versions: 9.0.0 sorts above 34.0.0
+# lexically.
+apksigner=$(printf '%s\n' "$sdk"/build-tools/*/apksigner | sort -V | tail -1)
 [ -x "$apksigner" ] || { echo "error: no apksigner under $sdk/build-tools" >&2; exit 1; }
 
 work=$(mktemp -d)
@@ -61,8 +79,14 @@ trap 'rm -rf "$work"' EXIT
 
 # The artifact from the tag's own Release run, so what gets signed is what CI built from
 # a clean checkout at that tag — not whatever this working tree happens to hold.
-run=$(gh run list --workflow=release.yml --branch "$tag" --status success \
-  --limit 1 --json databaseId --jq '.[0].databaseId')
+if ! run=$(gh run list --workflow=release.yml --branch "$tag" --status success \
+  --limit 1 --json databaseId --jq '.[0].databaseId'); then
+  # Same trap as above: without the `if`, errexit would exit here and the guard below — the
+  # one that knows what this query was for — would never run. gh has said something of its
+  # own by now; this says which step of the release it stopped.
+  echo "error: could not ask GitHub for the Release run of $tag" >&2
+  exit 1
+fi
 if [ -z "$run" ]; then
   echo "error: no successful Release run for $tag — is it still building?" >&2
   exit 1
