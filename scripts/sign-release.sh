@@ -27,11 +27,30 @@ if [ ! -f "$keystore" ]; then
 fi
 
 # apksigner is a shell wrapper around a jar, so it needs a JRE on PATH. This Mac has no
-# JDK on the default path; JAVA_HOME is set for gradle anyway, so reuse it.
+# JDK on the default path; JAVA_HOME is set for gradle anyway, so reuse it — and when it is
+# not set, fall back to the JDK this machine builds with. Signing is the one release step a
+# human runs by hand, so it is where the variable is most likely missing. Nothing in the repo
+# pins this path — CI uses actions/setup-java — so test for a runnable java under it rather
+# than assuming one: a machine without it gets the error below, not a JAVA_HOME the script
+# invented and then told you to change.
+brew_jdk=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home
+if [ -z "${JAVA_HOME:-}" ] && [ -x "$brew_jdk/bin/java" ]; then
+  JAVA_HOME=$brew_jdk
+fi
 if [ -n "${JAVA_HOME:-}" ]; then
+  export JAVA_HOME
   PATH="$JAVA_HOME/bin:$PATH"
 fi
-command -v java >/dev/null || { echo "error: no java on PATH; set JAVA_HOME" >&2; exit 1; }
+
+# Run java rather than looking for it: macOS ships /usr/bin/java as a stub that exists and
+# is executable whether or not a JDK is installed, so `command -v java` passes on a machine
+# with no runtime and the failure surfaces later from apksigner as Apple's "Unable to locate
+# a Java Runtime" — which names neither this script nor JAVA_HOME.
+if ! java -version >/dev/null 2>&1; then
+  echo "error: no working Java runtime${JAVA_HOME:+ (JAVA_HOME=$JAVA_HOME)}" >&2
+  echo "Set JAVA_HOME to a JDK, e.g. $brew_jdk" >&2
+  exit 1
+fi
 
 sdk=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$(sed -n 's/^sdk\.dir=//p' local.properties 2>/dev/null)}}
 apksigner=$(ls "$sdk"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)
