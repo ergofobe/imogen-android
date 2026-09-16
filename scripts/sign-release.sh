@@ -58,8 +58,11 @@ fi
 # missing local.properties and `ls` on a glob that matches nothing both fail exactly when the
 # thing being looked up is absent, which is the one case the guards exist for.
 sdk=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}
-if [ -z "$sdk" ] && [ -f local.properties ]; then
-  sdk=$(sed -n 's/^sdk\.dir=//p' local.properties)
+if [ -z "$sdk" ] && [ -r local.properties ]; then
+  # `-r` rather than `-f`, and `|| sdk=` behind it: a local.properties that exists but cannot
+  # be read would otherwise fail the sed and take the script out here, which is the silent
+  # exit this whole block exists to remove.
+  sdk=$(sed -n 's/^sdk\.dir=//p' local.properties) || sdk=
 fi
 if [ -z "$sdk" ]; then
   echo "error: no Android SDK location" >&2
