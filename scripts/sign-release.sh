@@ -28,12 +28,13 @@ fi
 
 # apksigner is a shell wrapper around a jar, so it needs a JRE on PATH. This Mac has no
 # JDK on the default path; JAVA_HOME is set for gradle anyway, so reuse it — and when it is
-# not set, fall back to the JDK every gradle invocation in this repo already names. This is
-# the one step a human runs by hand, so it is the one place the variable tends to be missing.
-# Guarded on the path existing: a machine without it should get the error below, not a
-# JAVA_HOME pointing at nothing.
+# not set, fall back to the JDK this machine builds with. Signing is the one release step a
+# human runs by hand, so it is where the variable is most likely missing. Nothing in the repo
+# pins this path — CI uses actions/setup-java — so test for a runnable java under it rather
+# than assuming one: a machine without it gets the error below, not a JAVA_HOME the script
+# invented and then told you to change.
 brew_jdk=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home
-if [ -z "${JAVA_HOME:-}" ] && [ -d "$brew_jdk" ]; then
+if [ -z "${JAVA_HOME:-}" ] && [ -x "$brew_jdk/bin/java" ]; then
   JAVA_HOME=$brew_jdk
 fi
 if [ -n "${JAVA_HOME:-}" ]; then
@@ -47,7 +48,7 @@ fi
 # a Java Runtime" — which names neither this script nor JAVA_HOME.
 if ! java -version >/dev/null 2>&1; then
   echo "error: no working Java runtime${JAVA_HOME:+ (JAVA_HOME=$JAVA_HOME)}" >&2
-  echo "Set JAVA_HOME to a JDK; this repo builds against $brew_jdk" >&2
+  echo "Set JAVA_HOME to a JDK, e.g. $brew_jdk" >&2
   exit 1
 fi
 
